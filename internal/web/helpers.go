@@ -10,8 +10,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Will-Luck/waymark/internal/mdlite"
-	"github.com/Will-Luck/waymark/internal/model"
+	"github.com/Will-Luck/forgemap/internal/mdlite"
+	"github.com/Will-Luck/forgemap/internal/model"
 )
 
 const fallbackIcon = "circle-dashed"
@@ -28,6 +28,13 @@ var (
 // <a> tags in its output are the ones it wrote.
 func mdText(s string) template.HTML {
 	return template.HTML(anchorRe.ReplaceAllString(string(mdlite.Render(s)), ""))
+}
+
+// cmdWhole is s escaped, with each "-reset-password" kept on one line: a
+// refusal that names the command never breaks inside it. It escapes first
+// and adds only its own fixed markup.
+func cmdWhole(s string) template.HTML {
+	return template.HTML(strings.ReplaceAll(template.HTMLEscapeString(s), "-reset-password", `<span class="nobr">-reset-password</span>`))
 }
 
 var zones sync.Map // IANA name -> *time.Location
@@ -55,21 +62,27 @@ func (s *server) loc() *time.Location { return zone(s.src.Snapshot().Meta.Timezo
 func (s *server) funcs() template.FuncMap {
 	return template.FuncMap{
 		"icon":        s.icon,
+		"cmdWhole":    cmdWhole,
 		"ago":         s.agoHTML,
 		"agoText":     func(t time.Time) string { return agoText(t, s.now()) },
 		"date":        func(t time.Time) string { return fmtDate(t, s.loc()) },
+		"day":         fmtDay,
 		"iso":         func(t time.Time) string { return t.UTC().Format(time.RFC3339) },
 		"unixMilli":   func(t time.Time) int64 { return t.UnixMilli() },
 		"md":          mdlite.Render,
 		"mdText":      mdText,
 		"tierLabel":   tierLabel,
+		"holdWord":    model.HoldWord,
 		"tierIcon":    tierIcon,
 		"tierClass":   tierClass,
 		"levelIcon":   levelIcon,
 		"levelWord":   levelWord,
 		"loud":        func(l model.Level) bool { return l == model.LevelWarn || l == model.LevelAlert },
 		"sparkline":   sparkline,
+		"sparkDecor":  sparkDecor,
+		"commitTotal": commitTotal,
 		"uptimeCells": func(h []model.ProbePoint) []uptimeCell { return uptimeCells(h, s.loc()) },
+		"uptimeNote":  func(h []model.ProbePoint) *uptimeNote { return uptimeSummary(h, s.loc()) },
 		"pct":         pct,
 		"pctf":        func(f float64) int { return clampPct(int(math.Round(f))) },
 		"ident":       ident,
@@ -88,6 +101,10 @@ func (s *server) funcs() template.FuncMap {
 		"plural":      plural,
 		"num":         func(n int) string { return thousands(n) },
 		"dict":        dict,
+		"joinList":    joinList,
+		"ownersWith":  ownersWith,
+		"repoCount":   repoCount,
+		"fingerprint": fingerprint,
 		"contains":    strings.Contains,
 		"stateWord":   stateWord,
 		"tiers":       func() []model.Tier { return model.TierOrder },
@@ -100,13 +117,26 @@ func (s *server) funcs() template.FuncMap {
 	}
 }
 
-// siteTitle is the page's title (config site.title), Waymark when a site
+// fingerprint writes a pin (a SHA-256 in lower-case hex) as a certificate's
+// fingerprint is usually shown: upper case, in pairs joined by colons.
+func fingerprint(pin string) string {
+	var b strings.Builder
+	for i := 0; i+1 < len(pin); i += 2 {
+		if i > 0 {
+			b.WriteByte(':')
+		}
+		b.WriteString(strings.ToUpper(pin[i : i+2]))
+	}
+	return b.String()
+}
+
+// siteTitle is the page's title (config site.title), ForgeMap when a site
 // does not say.
 func siteTitle(site *model.Site) string {
 	if site.Meta.Title != "" {
 		return site.Meta.Title
 	}
-	return "Waymark"
+	return "ForgeMap"
 }
 
 // notesLabel is the notes panel's title, from the notes adapter.
@@ -262,6 +292,27 @@ func plural(n int, one, many string) string {
 	return thousands(n) + " " + many
 }
 
+// ownersWith counts the owners a forge's token reads at least one repo of,
+// for "N repos across K owners".
+func ownersWith(owners []OwnerChoice) string {
+	n := 0
+	for _, o := range owners {
+		if o.Repos > 0 {
+			n++
+		}
+	}
+	return plural(n, "owner", "owners")
+}
+
+// repoCount is a forge's repo count, "or more" when the read stopped early
+// (a page cap or the connection test's deadline).
+func repoCount(n int, capped bool) string {
+	if capped {
+		return thousands(n) + " or more repos"
+	}
+	return plural(n, "repo", "repos")
+}
+
 func thousands(n int) string {
 	s := strconv.Itoa(n)
 	if n < 10000 && n > -10000 {
@@ -284,9 +335,22 @@ func fmtDate(t time.Time, loc *time.Location) string {
 	return t.In(loc).Format("2 Jan 2006")
 }
 
-// tierLabel takes a Tier or a project (whose hold kind names the word).
+// fmtDay is fmtDate for a date-only stamp (a hold's since, or a plan's
+// date from its file name, parsed as midnight UTC of the date written):
+// that date in every site zone, where fmtDate shows the day before west of
+// UTC.
+func fmtDay(t time.Time) string {
+	if t.IsZero() {
+		return ""
+	}
+	return t.UTC().Format("2 Jan 2006")
+}
+
+// tierLabel takes a Tier or a project. A hold is On hold whatever its kind:
+// the icon tells parked from frozen, and model.HoldWord names the kind in a
+// sentence.
 func tierLabel(v any) string {
-	t, h := tierOf(v)
+	t, _ := tierOf(v)
 	switch t {
 	case model.TierActive:
 		return "Active"
@@ -299,12 +363,6 @@ func tierLabel(v any) string {
 	case model.TierArchived:
 		return "Archived"
 	case model.TierHold:
-		if h != nil && h.Kind == "frozen" {
-			return "Frozen"
-		}
-		if h != nil && h.Kind == "parked" {
-			return "Parked"
-		}
 		return "On hold"
 	}
 	return "Unknown"
@@ -391,18 +449,27 @@ func levelWord(l model.Level) string {
 	return "Note"
 }
 
-// sparkline draws 12 weekly counts as a polyline over a soft area. The SVG is
-// built from numbers only, so it is safe to return as HTML.
+// sparkline draws 12 weekly counts as a polyline over a soft area, named by
+// its total for a screen reader. The SVG is built from numbers only, so it is
+// safe to return as HTML.
 func sparkline(vals []int) template.HTML {
+	return drawSparkline(vals, `role="img" aria-label="`+plural(commitTotal(vals), "commit", "commits")+` in 12 weeks"`)
+}
+
+// sparkDecor is the same drawing hidden from screen readers, for a card
+// whose words already give the total: a name too would read it twice.
+func sparkDecor(vals []int) template.HTML {
+	return drawSparkline(vals, `aria-hidden="true" focusable="false"`)
+}
+
+func drawSparkline(vals []int, attrs string) template.HTML {
 	const w, h, pad = 120.0, 30.0, 2.0
 	if len(vals) == 0 {
 		return ""
 	}
 	maxV := 0
-	total := 0
 	for _, v := range vals {
 		maxV = max(maxV, v)
-		total += v
 	}
 	step := w / float64(max(len(vals)-1, 1))
 	pts := make([]string, len(vals))
@@ -418,10 +485,19 @@ func sparkline(vals []int) template.HTML {
 	if maxV == 0 {
 		cls += " flat"
 	}
-	label := plural(total, "commit", "commits") + " in 12 weeks"
 	return template.HTML(fmt.Sprintf(
-		`<svg class="%s" viewBox="0 0 %.0f %.0f" preserveAspectRatio="none" role="img" aria-label="%s"><path class="spark-area" d="M0,%.0f L%s L%.0f,%.0f Z"></path><polyline class="spark-line" points="%s" vector-effect="non-scaling-stroke"></polyline></svg>`,
-		cls, w, h, label, h, line, w, h, line))
+		`<svg class="%s" viewBox="0 0 %.0f %.0f" preserveAspectRatio="none" %s><path class="spark-area" d="M0,%.0f L%s L%.0f,%.0f Z"></path><polyline class="spark-line" points="%s" vector-effect="non-scaling-stroke"></polyline></svg>`,
+		cls, w, h, attrs, h, line, w, h, line))
+}
+
+// commitTotal is a sparkline's sum: the number its label and the card's
+// last commit line both show.
+func commitTotal(vals []int) int {
+	n := 0
+	for _, v := range vals {
+		n += v
+	}
+	return n
 }
 
 type uptimeCell struct {
@@ -429,10 +505,21 @@ type uptimeCell struct {
 	Tip   string
 }
 
+// uptimeSlots is the bar's length: 144 ten-minute cells, 24 hours.
+const uptimeSlots = 144
+
+// uptimeSlot is the bar cell a check falls in, counted from the oldest; a
+// check outside the bar gives a number below 0.
+func uptimeSlot(p model.ProbePoint, end time.Time) int {
+	return uptimeSlots - 1 - int(math.Round(float64(end.Sub(p.At))/float64(10*time.Minute)))
+}
+
 // uptimeCells lays the probe history into 144 ten-minute cells ending at the
-// newest point, their tips in loc; slots with no sample are "none".
+// newest point, their tips in loc. A cell's worst check wins: one failed
+// check among five makes it "down", and its tip counts them ("1 of 5 checks
+// down"). Slots with no check are "none".
 func uptimeCells(hist []model.ProbePoint, loc *time.Location) []uptimeCell {
-	const n = 144
+	const n = uptimeSlots
 	cells := make([]uptimeCell, n)
 	if len(hist) == 0 {
 		for i := range cells {
@@ -441,22 +528,71 @@ func uptimeCells(hist []model.ProbePoint, loc *time.Location) []uptimeCell {
 		return cells
 	}
 	end := hist[len(hist)-1].At
-	for i := range cells {
-		at := end.Add(-time.Duration(n-1-i) * 10 * time.Minute)
-		cells[i] = uptimeCell{Class: "none", Tip: at.In(loc).Format("2 Jan 15:04") + ", no data"}
-	}
+	var checks, downs, latency [n]int
+	var upAt, downAt [n]time.Time
 	for _, p := range hist {
-		slot := n - 1 - int(math.Round(float64(end.Sub(p.At))/float64(10*time.Minute)))
+		slot := uptimeSlot(p, end)
 		if slot < 0 || slot >= n {
 			continue
 		}
-		c := uptimeCell{Class: "up", Tip: p.At.In(loc).Format("2 Jan 15:04") + ", up, " + strconv.Itoa(p.LatencyMS) + " ms"}
-		if !p.Up {
-			c = uptimeCell{Class: "down", Tip: p.At.In(loc).Format("2 Jan 15:04") + ", down"}
+		checks[slot]++
+		switch {
+		case !p.Up:
+			downs[slot]++
+			if !p.At.Before(downAt[slot]) {
+				downAt[slot] = p.At
+			}
+		case !p.At.Before(upAt[slot]):
+			upAt[slot], latency[slot] = p.At, p.LatencyMS
 		}
-		cells[slot] = c
+	}
+	for i := range cells {
+		switch {
+		case downs[i] > 0:
+			cells[i] = uptimeCell{Class: "down", Tip: downAt[i].In(loc).Format("2 Jan 15:04") + ", " +
+				strconv.Itoa(downs[i]) + " of " + plural(checks[i], "check", "checks") + " down"}
+		case checks[i] > 0:
+			cells[i] = uptimeCell{Class: "up", Tip: upAt[i].In(loc).Format("2 Jan 15:04") + ", up, " + strconv.Itoa(latency[i]) + " ms"}
+		default:
+			at := end.Add(-time.Duration(n-1-i) * 10 * time.Minute)
+			cells[i] = uptimeCell{Class: "none", Tip: at.In(loc).Format("2 Jan 15:04") + ", no data"}
+		}
 	}
 	return cells
+}
+
+// uptimeNote is the line under the bar: Lead in bold, then Rest.
+type uptimeNote struct {
+	Down       int
+	Lead, Rest string
+}
+
+// uptimeSummary counts the failed checks the bar draws and names the newest,
+// in loc: "Failed checks: 3 in 24 hours, last at 03:50", or "No failed checks
+// in 24 hours". A probe with no history gets no line (nil).
+func uptimeSummary(hist []model.ProbePoint, loc *time.Location) *uptimeNote {
+	if len(hist) == 0 {
+		return nil
+	}
+	end := hist[len(hist)-1].At
+	n := &uptimeNote{}
+	var last time.Time
+	for _, p := range hist {
+		if slot := uptimeSlot(p, end); p.Up || slot < 0 || slot >= uptimeSlots {
+			continue
+		}
+		n.Down++
+		if p.At.After(last) {
+			last = p.At
+		}
+	}
+	if n.Down == 0 {
+		n.Lead, n.Rest = "No failed checks", " in 24 hours"
+		return n
+	}
+	n.Lead = "Failed checks: " + strconv.Itoa(n.Down)
+	n.Rest = " in 24 hours, last at " + last.In(loc).Format("15:04")
+	return n
 }
 
 func pct(a, b int) int {

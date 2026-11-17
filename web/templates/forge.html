@@ -1,0 +1,92 @@
+{{define "main"}}{{$v := .Data}}{{$e := $v.Form.Field}}
+<div class="{{if $v.Step}}bare-main wide{{else}}wrap forge-page{{end}}">
+  {{if $v.Step}}{{template "steps" $v.Step}}
+  <p><a class="btn quiet" href="/setup?step=2">Back to your forges</a></p>
+  {{else}}<p><a class="btn quiet" href="/settings#forges">Back to Settings</a></p>{{end}}
+{{if $v.Add}}
+  <h1>Add a forge</h1>
+  <section class="form-card">
+    {{template "forgeAdd" (dict "Form" $v.Form "Add" $v.AddForm "H2" true)}}
+  </section>
+{{else if $v.Failed}}
+  <h1>Forge</h1>
+  {{template "formTop" $v.Form.Top}}
+{{else}}
+  <h1>{{$v.Name}}{{with $v.Address}} <small><span class="mono">{{.}}</span></small>{{end}}</h1>
+  {{if not $v.AtToken}}{{template "refusedTop" (dict "F" $v.Form "Lead" "Not saved." "One" "setting needs" "Many" "settings need")}}
+  {{template "formTop" $v.Form.Top}}{{end}}
+  {{with $v.Problem}}{{if not $v.ProblemAtTop}}<p class="callout warn">{{icon "triangle-alert"}}<span>{{.}}</span></p>{{end}}
+  {{else}}<p class="form-ok" role="status">{{icon "circle-check"}}<span>Connected as <b>{{$v.Login}}</b>. {{repoCount $v.Repos $v.Capped}} across {{ownersWith $v.Owners}}.</span></p>{{end}}
+  {{with $v.Trusted}}<section class="form-card" aria-label="Trusted certificate">
+    <p class="form-ok">{{icon "shield-check"}}<span>You trust this forge's certificate. Fingerprint (SHA-256): <span class="mono">{{fingerprint .}}</span></span></p>
+    <form class="form-inline" method="post" action="/settings/forges/{{$v.ID}}/trust"><input type="hidden" name="stop" value="on"><button class="btn">{{icon "circle-x"}}Stop trusting</button>
+      <span class="field-hint">ForgeMap then checks this forge's certificate the normal way. It reads the forge that way first, and changes nothing if that fails.</span></form>
+  </section>{{end}}
+  {{with $v.Cert}}<section class="form-card" aria-label="The forge's certificate"><div class="cert">
+    <h2>{{icon "shield"}}The certificate of {{.Host}}</h2>
+    <p>{{.Reason}}</p>
+    {{template "certFacts" .}}
+    {{if not .Passes}}<form class="form-inline" method="post" action="/settings/forges/{{$v.ID}}/trust"><input type="hidden" name="trust" value="{{.Pin}}"><button class="btn">{{icon "shield-check"}}{{if $v.Trusted}}Trust the new certificate{{else}}Trust this certificate{{end}}</button></form>
+    <p class="field-hint">ForgeMap first reads the forge with its saved token through this certificate, and saves it only if that works. Then it accepts this certificate and no other from {{.Host}}. If you can, compare the fingerprint with the one your forge shows.</p>{{end}}
+  </div></section>{{end}}
+
+  <section class="form-card">
+    <form class="form" method="post" action="/settings/forges/{{$v.ID}}">
+      <fieldset class="field" id="owners">
+        <legend>Whose repos to show</legend>
+        <div class="chips">
+          {{range $v.Owners}}<label class="chip pick"><input type="checkbox" name="owners" value="{{.Login}}"{{if .Picked}} checked{{end}}><span>{{.Login}}{{if not $v.Problem}} <small>{{plural .Repos "repo" "repos"}}</small>{{end}}</span></label>
+          {{end}}
+        </div>
+        {{if $v.Capped}}<p class="field-hint">The read stopped early, so there may be more owners and repos than these.</p>{{end}}
+        {{template "fieldErr" (dict "Name" "owners" "Msg" (index $e "owners"))}}
+      </fieldset>
+      <div class="toggle">
+        <input type="checkbox" class="switch" id="heatmap"{{with index $e "heatmap"}} aria-invalid="true"{{end}} aria-describedby="hint-heatmap{{with index $e "heatmap"}} err-heatmap{{end}}" name="heatmap" value="on"{{if $v.Heatmap}} checked{{end}}>
+        <div><label for="heatmap"><b>Add its contribution days to the year of commits</b></label><p class="field-hint" id="hint-heatmap">Turn it off for a forge that mirrors another, or mirrored commits count twice.</p>{{template "fieldErr" (dict "Name" "heatmap" "Msg" (index $e "heatmap"))}}</div>
+      </div>
+      <div class="toggle">
+        <input type="checkbox" class="switch" id="forks"{{with index $e "forks"}} aria-invalid="true"{{end}} aria-describedby="hint-forks{{with index $e "forks"}} err-forks{{end}}" name="forks" value="on"{{if $v.Forks}} checked{{end}}>
+        <div><label for="forks"><b>Show forks</b></label><p class="field-hint" id="hint-forks">Off: a fork shows only when the projects file names it.</p>{{template "fieldErr" (dict "Name" "forks" "Msg" (index $e "forks"))}}</div>
+      </div>
+      <div class="form-foot"><button class="btn accent">Save</button></div>
+    </form>
+    <p class="field-hint">Its name in a projects file: <code>{{$v.ID}}</code></p>
+  </section>
+
+  <section class="form-card">
+    <form id="token" class="form" method="post" action="/settings/forges/{{$v.ID}}/token#token">{{/* the fragment survives the POST: a refusal opens here; a pass redirects to #top */}}
+      <h2>{{icon "key-round"}}Replace token</h2>
+      {{if $v.AtToken}}{{template "refusedTop" (dict "F" $v.Form "Lead" "Not saved." "One" "box needs" "Many" "boxes need")}}
+      {{template "formTop" $v.Form.Top}}{{end}}
+      {{if ne $v.Type "github"}}<div class="field" data-address>
+        <label for="new-address">Address</label>
+        <input type="url" class="input mono" id="new-address" autocomplete="url" spellcheck="false"{{with index $e "address"}} aria-invalid="true"{{end}} aria-describedby="hint-address{{with index $e "address"}} err-address{{end}}" name="address" value="{{or $v.TokenAddress $v.Address}}">
+        <p class="field-hint" id="hint-address">Changing the address needs the token typed again.</p>
+        {{template "fieldErr" (dict "Name" "address" "Msg" (index $e "address"))}}
+      </div>{{end}}
+      <div class="field">
+        <label for="new-token">New read-only token</label>
+        <input type="password" class="input mono" id="new-token" autocomplete="off" spellcheck="false" required{{with index $e "token"}} aria-invalid="true"{{end}} aria-describedby="hint-token{{with index $e "token"}} err-token{{end}}" name="token" value="">
+        <p class="field-hint" id="hint-token">It is tested before it is saved. The old token stays until the new one works.</p>
+        {{template "fieldErr" (dict "Name" "token" "Msg" (index $e "token"))}}
+      </div>
+      {{if $v.AtToken}}{{template "certTick" (dict "C" $v.Form.Cert "Button" "Replace token" "ID" "new-trust")}}{{end}}
+      <div class="form-foot"><button class="btn">{{icon "key-round"}}Replace token</button></div>
+    </form>
+  </section>
+
+  <section class="form-card">
+    <form class="form-inline" method="post" action="/settings/forges/{{$v.ID}}/check">
+      <button class="btn">{{icon "refresh-cw"}}Check again</button>
+      <span class="field-hint">Reads the forge again with the saved token.</span>
+    </form>
+    <details id="remove" class="danger">
+      <summary>{{icon "circle-x"}}Remove this forge</summary>
+      <p>ForgeMap stops reading it at once. Its projects leave the page unless another forge has them.</p>
+      <form class="form-inline" method="post" action="/settings/forges/{{$v.ID}}/remove"><button class="btn">Remove {{$v.Name}}</button></form>
+    </details>
+  </section>
+{{end}}
+</div>
+{{end}}

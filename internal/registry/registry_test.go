@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Will-Luck/waymark/internal/forge"
+	"github.com/Will-Luck/forgemap/internal/forge"
 )
 
 var forgeIDs = []string{"gitea", "github"}
@@ -41,7 +41,7 @@ func TestParseSeedRegistry(t *testing.T) {
 	if last := r.Categories[len(r.Categories)-1]; last.Key != UnsortedKey || last.Icon != "folder-git-2" || last.Hue != 265 {
 		t.Errorf("unsorted category not appended last: %+v", last)
 	}
-	if !r.Hidden("waymark-config") || !r.Hidden("Waymark-Config") || r.Hidden("beacon") {
+	if !r.Hidden("forgemap-config") || !r.Hidden("ForgeMap-Config") || r.Hidden("beacon") {
 		t.Error("hide_repos match is wrong")
 	}
 	b := r.Project("beacon")
@@ -142,7 +142,7 @@ func TestAutoProjects(t *testing.T) {
 	}
 	repos := []forge.Repo{
 		{Forge: "gitea", FullName: "acme/beacon", Name: "beacon", Description: "x"},
-		{Forge: "gitea", FullName: "acme/waymark-config", Name: "waymark-config"},
+		{Forge: "gitea", FullName: "acme/forgemap-config", Name: "forgemap-config"},
 		{Forge: "gitea", FullName: "acme/Ledger", Name: "Ledger", Description: "Billing and invoices API."},
 		{Forge: "gitea", FullName: "acme/sandbox", Name: "sandbox"},
 		{Forge: "gitea", FullName: "acme/harbour", Name: "harbour"},

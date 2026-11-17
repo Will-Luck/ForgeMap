@@ -1,5 +1,5 @@
 {{define "layout"}}<!doctype html>
-<html lang="en-GB"{{with .Theme}} data-theme="{{.}}"{{end}}>
+<html lang="en-GB"{{with .Theme}} data-theme="{{.}}"{{end}}{{if .Account.On}} data-signin{{end}}>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -13,6 +13,7 @@
 <link rel="stylesheet" href="{{.Static}}/css/app.css">
 <link rel="stylesheet" href="{{.DynCSS}}">
 <link rel="icon" href="{{.Static}}/favicon.svg" type="image/svg+xml">
+<link rel="alternate" type="application/atom+xml" href="/feed.atom" title="{{.Brand}}: changes">
 <script type="module" src="{{.Static}}/js/app.js"></script>
 <script type="speculationrules">{"prerender":[{"where":{"href_matches":"/p/*"},"eagerness":"moderate"}]}</script>
 </head>
@@ -50,6 +51,9 @@
           {{range .Sources}}{{template "srcRow" .}}{{end}}
         </ul>
       </div>
+      {{- if .Account.Owner}}
+      <a class="btn head-settings" href="/settings">{{icon "settings"}}<span>Settings</span></a>
+      {{- end}}
       <button type="button" class="search-btn" data-palette-open data-js-only aria-label="Search" aria-keyshortcuts="Control+K Meta+K /">
         {{icon "search"}}<span class="search-word">Search</span><kbd data-kbd>Ctrl K</kbd>
       </button>
@@ -66,6 +70,9 @@
 <footer class="site-foot">
   <div class="wrap foot-inner">
     <p class="foot-brand"><b>{{.Brand}}</b> <span class="mono">{{.Version}}</span>. Generated {{ago .Site.GeneratedAt}}, from the work itself: nothing here is typed in by hand.</p>
+    {{- if and .Account.On (not .Account.Owner)}}
+    <p class="foot-signin"><a href="/signin">{{icon "lock"}}Sign in</a></p>
+    {{- end}}
     <ul class="foot-src" aria-label="Sources and their ages">
       {{range .Sources}}<li class="{{if .OK}}ok{{else}}bad{{end}}">{{if .OK}}{{icon "check"}}{{else}}{{icon "octagon-alert"}}{{end}}<span><b>{{.Label}}</b> {{if not .OK}}failing, {{end}}{{ago .RefreshedAt}}</span></li>{{end}}
     </ul>

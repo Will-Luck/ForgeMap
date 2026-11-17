@@ -1,18 +1,18 @@
 #!/usr/bin/env bash
-# Writes the Docker feed Waymark reads (docker.feed): one JSON object per
+# Writes the Docker feed ForgeMap reads (docker.feed): one JSON object per
 # container from `docker ps -a`. Run it from the host's cron every minute,
 # e.g. with the script installed in /usr/local/bin:
 #
-#   * * * * * FEED_DIR=/var/lib/waymark-feed /usr/local/bin/docker-feed.sh
+#   * * * * * FEED_DIR=/var/lib/forgemap-feed /usr/local/bin/docker-feed.sh
 #
-# Mount the DIRECTORY read-only in the container (-v /var/lib/waymark-feed:/feed:ro,
+# Mount the DIRECTORY read-only in the container (-v /var/lib/forgemap-feed:/feed:ro,
 # docker.feed: /feed/docker.json), never the single file: the file is replaced
 # by a rename, which detaches a single-file bind mount. Because it is written
 # to a temp name and renamed, a reader never sees half a feed. If docker fails
-# or hangs, the old feed stays in place and Waymark labels it stale.
+# or hangs, the old feed stays in place and ForgeMap labels it stale.
 set -euo pipefail
 
-FEED_DIR="${FEED_DIR:-/var/lib/waymark-feed}"
+FEED_DIR="${FEED_DIR:-/var/lib/forgemap-feed}"
 FEED_TIMEOUT="${FEED_TIMEOUT:-30}" # seconds docker ps may take
 mkdir -p "$FEED_DIR"
 

@@ -1,5 +1,5 @@
 package gitea
 
-import "github.com/Will-Luck/waymark/internal/forge"
+import "github.com/Will-Luck/forgemap/internal/forge"
 
 var _ forge.Forge = (*Client)(nil)

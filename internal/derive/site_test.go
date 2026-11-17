@@ -6,9 +6,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Will-Luck/waymark/internal/forge"
-	"github.com/Will-Luck/waymark/internal/model"
-	"github.com/Will-Luck/waymark/internal/registry"
+	"github.com/Will-Luck/forgemap/internal/forge"
+	"github.com/Will-Luck/forgemap/internal/model"
+	"github.com/Will-Luck/forgemap/internal/registry"
 )
 
 func siteInput(t *testing.T) SiteInput {

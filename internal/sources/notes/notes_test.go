@@ -9,7 +9,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/Will-Luck/waymark/internal/registry"
+	"github.com/Will-Luck/forgemap/internal/registry"
 )
 
 const dir = "../../../testdata/notes"

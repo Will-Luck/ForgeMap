@@ -7,13 +7,15 @@ import (
 	"html/template"
 	"io/fs"
 	"net/http"
+	"net/url"
+	"path"
 	"strings"
 	"sync"
 	"time"
 	_ "time/tzdata" // the site's time zone in a scratch container
 
-	"github.com/Will-Luck/waymark/internal/model"
-	assets "github.com/Will-Luck/waymark/web"
+	"github.com/Will-Luck/forgemap/internal/model"
+	assets "github.com/Will-Luck/forgemap/web"
 )
 
 type Options struct {
@@ -23,10 +25,14 @@ type Options struct {
 	Dev bool
 	// Now overrides the clock for relative times (tests). Nil means time.Now.
 	Now func() time.Time
+	// Manager turns on setup, sign-in and Settings (a browser-set-up
+	// install). Nil, as in file, quick-start, demo and fixture installs:
+	// none of their routes exist.
+	Manager Manager
 }
 
 // CSP is the Content-Security-Policy sent with every response.
-const CSP = "default-src 'self'; script-src 'self' 'inline-speculation-rules'; style-src 'self'; img-src 'self' data:; connect-src 'self'; font-src 'self'; frame-ancestors 'none'"
+const CSP = "default-src 'self'; script-src 'self' 'inline-speculation-rules'; style-src 'self'; img-src 'self' data:; connect-src 'self'; font-src 'self'; form-action 'self'; frame-ancestors 'none'"
 
 type server struct {
 	src    model.Source
@@ -39,6 +45,17 @@ type server struct {
 
 	mu  sync.Mutex
 	der *derived
+
+	// streams holds a token for each open /events stream, at most
+	// maxStreams of them.
+	streams chan struct{}
+	// timer times a stream's life (streamLife); tests replace it.
+	timer func(time.Duration) (<-chan time.Time, func() bool)
+	// ping times a stream's heartbeat; tests replace it.
+	ping func(time.Duration) (<-chan time.Time, func())
+
+	// notice is the owner's one-time message for the next Settings page.
+	notice notice
 }
 
 // New returns the web handler. It panics if the embedded templates or assets
@@ -52,9 +69,17 @@ func New(src model.Source, opts Options) http.Handler {
 }
 
 func newServer(src model.Source, opts Options, fsys fs.FS) (*server, error) {
-	s := &server{src: src, opts: opts, now: opts.Now}
+	s := &server{src: src, opts: opts, now: opts.Now, streams: make(chan struct{}, maxStreams)}
 	if s.now == nil {
 		s.now = time.Now
+	}
+	s.timer = func(d time.Duration) (<-chan time.Time, func() bool) {
+		t := time.NewTimer(d)
+		return t.C, t.Stop
+	}
+	s.ping = func(d time.Duration) (<-chan time.Time, func()) {
+		t := time.NewTicker(d)
+		return t.C, t.Stop
 	}
 	var err error
 	if s.assets, err = loadAssets(fsys); err != nil {
@@ -71,28 +96,92 @@ func newServer(src model.Source, opts Options, fsys fs.FS) (*server, error) {
 
 func (s *server) routes() http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /{$}", s.overview)
-	mux.HandleFunc("GET /p/{slug}", s.project)
-	mux.HandleFunc("GET /p/{slug}/card", s.card)
-	mux.HandleFunc("GET /p/{slug}/live", s.live)
-	mux.HandleFunc("GET /ideas", s.ideas)
-	mux.HandleFunc("GET /ships", s.ships)
-	mux.HandleFunc("GET /map", s.mapPage)
-	mux.HandleFunc("GET /api/site.json", s.apiSite)
-	mux.HandleFunc("GET /api/p/{file}", s.apiProject)
-	mux.HandleFunc("GET /api/search.json", s.apiSearch)
-	mux.HandleFunc("GET /api/live.json", s.apiLive)
-	mux.HandleFunc("POST /api/refresh", s.apiRefresh)
-	mux.HandleFunc("GET /events", s.events)
+	// Each route is guarded by its kind (guard.go); with no Manager the guard
+	// is the handler itself.
+	mux.HandleFunc("GET /{$}", s.guard(kindPage, s.overview))
+	mux.HandleFunc("GET /p/{slug}", s.guard(kindPage, s.project))
+	mux.HandleFunc("GET /p/{slug}/card", s.guard(kindLive, s.card))
+	mux.HandleFunc("GET /p/{slug}/live", s.guard(kindLive, s.live))
+	mux.HandleFunc("GET /fragments/overview-head", s.guard(kindLive, s.overviewHead))
+	mux.HandleFunc("GET /ideas", s.guard(kindPage, s.ideas))
+	mux.HandleFunc("GET /ships", s.guard(kindPage, s.ships))
+	mux.HandleFunc("GET /map", s.guard(kindPage, s.mapPage))
+	mux.HandleFunc("GET /api/site.json", s.guard(kindData, s.apiSite))
+	mux.HandleFunc("GET /api/p/{file}", s.guard(kindData, s.apiProject))
+	mux.HandleFunc("GET /api/search.json", s.guard(kindData, s.apiSearch))
+	mux.HandleFunc("GET /api/live.json", s.guard(kindData, s.apiLive))
+	mux.HandleFunc("POST /api/refresh", s.guard(kindData, s.apiRefresh))
+	mux.HandleFunc("GET /events", s.guard(kindLive, s.events))
+	mux.HandleFunc("GET /feed.atom", s.guard(kindData, s.feed))
 	mux.HandleFunc("GET /healthz", s.healthz)
 	mux.HandleFunc("GET /static/{hash}/{path...}", s.staticFile)
-	mux.HandleFunc("GET /dyn/{hash}/site.css", s.dynCSS)
+	mux.HandleFunc("GET /dyn/{hash}/site.css", s.guard(kindLive, s.dynCSS))
 	mux.HandleFunc("GET /favicon.ico", func(w http.ResponseWriter, r *http.Request) {
 		// Browsers ask for this on pages without a <link rel=icon> (the JSON ones).
 		http.Redirect(w, r, "/static/"+s.assets.hash+"/favicon.svg", http.StatusFound)
 	})
-	mux.HandleFunc("/", s.notFound)
+	mux.HandleFunc("/", s.guard(kindPage, s.notFound))
+	// Setup, sign-in and Settings exist only on a browser-set-up install:
+	// without a Manager the catch-all answers them with the 404 page.
+	if s.opts.Manager != nil {
+		for pattern, h := range map[string]http.HandlerFunc{
+			"GET /signin":             s.signInPage,
+			"POST /signin":            s.signIn,
+			"POST /signout":           s.signOut,
+			"GET /setup":              s.setupPage,
+			"POST /setup/account":     s.setupAccount,
+			"POST /setup/finish":      s.setupFinish,
+			"GET /settings":           s.settingsPage,
+			"POST /settings":          s.saveMain,
+			"POST /settings/password": s.changePassword,
+			"POST /settings/key":      s.newKey,
+			// The literal "new" wins over {id}: the mux prefers the more
+			// specific pattern.
+			"GET /settings/forges/new":          s.forgeNew,
+			"GET /settings/forges/{id}":         s.forgeEdit,
+			"POST /settings/forges":             s.connectForge,
+			"POST /settings/forges/{id}":        s.saveForge,
+			"POST /settings/forges/{id}/token":  s.replaceToken,
+			"POST /settings/forges/{id}/check":  s.checkForge,
+			"POST /settings/forges/{id}/remove": s.removeForge,
+			"POST /settings/forges/{id}/trust":  s.trustForge,
+		} {
+			mux.HandleFunc(pattern, s.guard(kindAccount, h))
+		}
+		return secure(tidyOnce(mux))
+	}
 	return secure(mux)
+}
+
+// tidyOnce serves an address that carries a one-time sign-in token at its
+// tidy path ("//signin" as "/signin", what a base address copied with its
+// trailing slash gives), where the mux would redirect it: the redirect would
+// put the token in a Location, which a browser keeps.
+func tidyOnce(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if raw := r.URL.EscapedPath(); r.URL.Query().Has("once") {
+			if tidy := cleanPath(raw); tidy != raw {
+				if p, err := url.PathUnescape(tidy); err == nil {
+					r = r.Clone(r.Context())
+					r.URL.Path, r.URL.RawPath = p, tidy
+				}
+			}
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// cleanPath tidies an escaped path as the mux does before it redirects:
+// path.Clean, keeping a trailing slash.
+func cleanPath(p string) string {
+	if p == "" || p[0] != '/' {
+		p = "/" + p
+	}
+	np := path.Clean(p)
+	if strings.HasSuffix(p, "/") && np != "/" {
+		np += "/"
+	}
+	return np
 }
 
 // secure adds the headers every response carries.

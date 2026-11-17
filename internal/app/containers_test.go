@@ -12,10 +12,10 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/Will-Luck/waymark/internal/config"
-	"github.com/Will-Luck/waymark/internal/model"
-	"github.com/Will-Luck/waymark/internal/registry"
-	"github.com/Will-Luck/waymark/internal/sources/docker"
+	"github.com/Will-Luck/forgemap/internal/config"
+	"github.com/Will-Luck/forgemap/internal/model"
+	"github.com/Will-Luck/forgemap/internal/registry"
+	"github.com/Will-Luck/forgemap/internal/sources/docker"
 )
 
 func ctr(name, state, source string) docker.Container {

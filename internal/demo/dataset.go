@@ -1,4 +1,4 @@
-// Package demo is Waymark's synthetic world: an invented team, acme, with
+// Package demo is ForgeMap's synthetic world: an invented team, acme, with
 // about ten repos on a Gitea forge and a GitHub forge, a Docker feed, notes,
 // probes and an F-Droid index, chosen so that every state the site shows
 // appears at least once. Demo mode serves it through an in-process fake
@@ -16,7 +16,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Will-Luck/waymark/internal/model"
+	"github.com/Will-Luck/forgemap/internal/model"
 )
 
 const (
@@ -29,7 +29,7 @@ const (
 	GiteaWeb  = "https://git.example.com"
 	GitHubWeb = "https://github.example.com"
 	// ConfigRepo holds the projects file and the ideas file on Gitea.
-	ConfigRepo = "waymark-config"
+	ConfigRepo = "forgemap-config"
 	// baseToken in a served file is replaced by World.Base.
 	baseToken = "{base}"
 )
@@ -364,7 +364,7 @@ func Dataset(now time.Time) *World {
 		{Number: 21, Title: "Pick the default sound for new alerts", Author: "priya", Labels: []string{"needs-you"}, Comments: 2, Created: ago(3 * day), Updated: ago(1 * day)},
 		{Number: 19, Title: "Webhook retries with backoff", Author: "lena", Labels: []string{"idea"}, Comments: 1, Created: ago(9 * day), Updated: ago(4 * day)},
 		{Number: 17, Title: "The status page shows the wrong time zone", Author: "tom", Labels: []string{"bug"}, Comments: 3, Created: ago(10 * day), Updated: ago(6 * day)},
-		{Number: 15, Title: "Status badge for READMEs", Author: "mark", Body: "An SVG badge with the current status, for project READMEs.\n\nFrom the ideas list.\nwaymark-idea:beacon-01",
+		{Number: 15, Title: "Status badge for READMEs", Author: "mark", Body: "An SVG badge with the current status, for project READMEs.\n\nFrom the ideas list.\nforgemap-idea:beacon-01",
 			Created: ago(9 * day), Updated: ago(9 * day)},
 	}
 	b.r.PRs = []Issue{
@@ -502,7 +502,7 @@ func Dataset(now time.Time) *World {
 	oldSite := old.done()
 
 	// The projects file and the ideas file, hidden from the board.
-	cf := repo("gitea", ConfigRepo, "Waymark's projects and ideas files.", 110, 100*day)
+	cf := repo("gitea", ConfigRepo, "ForgeMap's projects and ideas files.", 110, 100*day)
 	cf.commit(26*hour, mark, "Add the inkwell hold")
 	cf.r.Files["projects.yaml"] = projectsYAML(now)
 	cf.r.Files["ideas.json"] = ideasJSON(now)
@@ -599,7 +599,7 @@ func seededEvents(w *World) []model.Event {
 // projectsYAML is the projects file: identity only, never state.
 func projectsYAML(now time.Time) string {
 	parked := date(now.Add(-40 * day))
-	return `# Identity only, never state: Waymark derives the rest.
+	return `# Identity only, never state: ForgeMap derives the rest.
 owner: acme
 categories:
   - {key: services, label: Services, icon: server, hue: 150}
@@ -607,7 +607,7 @@ categories:
   - {key: mobile, label: Mobile, icon: smartphone, hue: 300}
   - {key: tools, label: Tools, icon: package, hue: 40}
   - {key: operations, label: Operations, icon: network, hue: 20}
-hide_repos: [waymark-config]
+hide_repos: [forgemap-config]
 projects:
   - slug: beacon
     name: Beacon

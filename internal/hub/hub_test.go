@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Will-Luck/waymark/internal/model"
+	"github.com/Will-Luck/forgemap/internal/model"
 )
 
 func TestPublishFanOut(t *testing.T) {

@@ -1,12 +1,13 @@
 package derive
 
 import (
+	"strings"
 	"testing"
 	"time"
 
-	"github.com/Will-Luck/waymark/internal/model"
-	"github.com/Will-Luck/waymark/internal/registry"
-	"github.com/Will-Luck/waymark/internal/sources/probe"
+	"github.com/Will-Luck/forgemap/internal/model"
+	"github.com/Will-Luck/forgemap/internal/registry"
+	"github.com/Will-Luck/forgemap/internal/sources/probe"
 )
 
 // siteAt is a project Live through its probe alone (no repo, no notes) as
@@ -433,5 +434,171 @@ func TestCountedContainerOutageStaysConfirmed(t *testing.T) {
 	}
 	if b.Project.Headline != "Container app is restarting (exit code 1)" || b.Project.HeadlineLevel != model.LevelAlert {
 		t.Errorf("headline = %q %s", b.Project.Headline, b.Project.HeadlineLevel)
+	}
+}
+
+// gapAt is siteAt seen at at with its last two checks failed and gap apart:
+// 12 hours of up checks two minutes apart, a failed check at at-gap, no
+// check in between (ForgeMap restarting, or its host asleep), and the failed
+// check at at, which the history holds too.
+func gapAt(slug string, at time.Time, gap time.Duration, prev *Fingerprint) Input {
+	in := siteAt(slug, at.Add(-gap), 1, prev)
+	pd := &in.Probes[0]
+	last := *pd.Last
+	last.At = at
+	pd.Last = &last
+	pd.History = append(pd.History, model.ProbePoint{At: at})
+	return in
+}
+
+// A failed check, an hour with no checks (a restart), then a failed check:
+// not two in a row. The site says "failed once, checking again" (warn),
+// with 0 Fix, 0 events, 0 Needs you and the tier unchanged (carry-over 2).
+func TestRestartGapIsAFirstFailure(t *testing.T) {
+	t0 := testNow.Add(-time.Hour)
+	_, _, fp := step(t, t0.Add(-2*time.Minute), siteAt("site", t0.Add(-2*time.Minute), 0, nil))
+	_, _, fp = step(t, t0, siteAt("site", t0, 1, &fp)) // the last check before the restart failed once
+	in := gapAt("site", testNow, time.Hour, &fp)
+	b, evs, _ := step(t, testNow, in)
+	p := b.Project
+	if len(fixes(p)) != 0 || len(evs) != 0 || p.Tier != model.TierLive {
+		t.Errorf("fail, an hour, fail: Fix %+v, events %+v, tier %s; want none, none, live", fixes(p), evs, p.Tier)
+	}
+	if !p.Probes[0].Unconfirmed || p.Headline != "Live site: failed once, checking again" || p.HeadlineLevel != model.LevelWarn {
+		t.Errorf("unconfirmed %v, headline %q %s; want unconfirmed, \"Live site: failed once, checking again\" warn",
+			p.Probes[0].Unconfirmed, p.Headline, p.HeadlineLevel)
+	}
+	if n := needsYou(t, testNow, in); n != 0 {
+		t.Errorf("needs you = %d, want 0", n)
+	}
+}
+
+// failRun stops at a gap of more than ProbeRunGap (5 minutes) between two
+// failed checks; 5 minutes exactly still counts. Two checks at one instant
+// (two passes on one clock) are one check (carry-over 2).
+func TestFailRunStopsAtAGap(t *testing.T) {
+	at := testNow
+	failed := &probe.Result{At: at, Err: "context deadline exceeded"}
+	pt := func(ago time.Duration, up bool) model.ProbePoint { return model.ProbePoint{At: at.Add(-ago), Up: up} }
+	cases := []struct {
+		name  string
+		hist  []model.ProbePoint
+		n     int
+		first time.Time
+	}{
+		{"2 minutes apart", []model.ProbePoint{pt(4*time.Minute, true), pt(2*time.Minute, false), pt(0, false)}, 2, at.Add(-2 * time.Minute)},
+		{"5 minutes apart", []model.ProbePoint{pt(5*time.Minute, false), pt(0, false)}, 2, at.Add(-5 * time.Minute)},
+		{"just over 5 minutes", []model.ProbePoint{pt(5*time.Minute+time.Second, false), pt(0, false)}, 1, at},
+		{"an hour apart", []model.ProbePoint{pt(time.Hour, false), pt(0, false)}, 1, at},
+		{"a gap inside a run", []model.ProbePoint{pt(64*time.Minute, false), pt(62*time.Minute, false), pt(2*time.Minute, false), pt(0, false)}, 2, at.Add(-2 * time.Minute)},
+		{"a run longer than the gap", []model.ProbePoint{pt(8*time.Minute, true), pt(6*time.Minute, false), pt(4*time.Minute, false), pt(2*time.Minute, false), pt(0, false)}, 4, at.Add(-6 * time.Minute)},
+		{"two passes at one instant", []model.ProbePoint{pt(10*time.Minute, true), pt(0, false), pt(0, false)}, 1, at},
+	}
+	for _, tc := range cases {
+		n, first := failRun(ProbeData{Label: "Live", Last: failed, History: tc.hist})
+		if n != tc.n || !first.Equal(tc.first) {
+			t.Errorf("%s: run of %d from %v, want %d from %v", tc.name, n, first, tc.n, tc.first)
+		}
+	}
+}
+
+// A restart during a real outage: the probe already counted as down (stored
+// down since 2 hours ago), its last check before the restart failed an hour
+// ago, and the first after it fails now. It stays confirmed, the Fix keeps
+// its date, and nothing is emitted (no false "back up" then "down").
+func TestCountedOutageSurvivesARestartGap(t *testing.T) {
+	began := testNow.Add(-2 * time.Hour)
+	prev := Fingerprint{Name: "Site site", Tier: model.TierDormant, Probes: map[string]bool{"Live site": false}, ProbeDown: map[string]time.Time{"Live site": began}}
+	b, evs, _ := step(t, testNow, gapAt("site", testNow, time.Hour, &prev))
+	f := fixes(b.Project)
+	if len(evs) != 0 || len(f) != 1 || !f[0].At.Equal(began) || b.Project.Probes[0].Unconfirmed {
+		t.Errorf("events %+v, Fix %+v, unconfirmed %v; want none, one at %v, confirmed", evs, f, b.Project.Probes[0].Unconfirmed, began)
+	}
+}
+
+// homepageAcrossGap is a project with one homepage probe seen at testNow:
+// 12 hours of up checks two minutes apart, then the checks pre names
+// (oldest first; u up, x failed, d a failed check at the same instant as
+// the one before it, | an hour with no checks), the last of them an hour
+// ago, an hour with no checks (ForgeMap restarting), and a failed check now,
+// which the history holds too.
+func homepageAcrossGap(pre string) Input {
+	u := "https://app.example.com"
+	at := testNow.Add(-time.Hour)
+	var newest []model.ProbePoint
+	for i := len(pre) - 1; i >= 0; i-- {
+		switch pre[i] {
+		case '|':
+			at = at.Add(-time.Hour)
+			continue
+		case 'd':
+			newest = append(newest, model.ProbePoint{At: at})
+			continue
+		}
+		newest = append(newest, model.ProbePoint{At: at, Up: pre[i] == 'u'})
+		at = at.Add(-2 * time.Minute)
+	}
+	for i := 0; i < 360; i++ {
+		newest = append(newest, model.ProbePoint{At: at, Up: true, LatencyMS: 20})
+		at = at.Add(-2 * time.Minute)
+	}
+	hist := make([]model.ProbePoint, 0, len(newest)+1)
+	for i := len(newest) - 1; i >= 0; i-- {
+		hist = append(hist, newest[i])
+	}
+	hist = append(hist, model.ProbePoint{At: testNow})
+	return Input{
+		Project:    registry.Project{Slug: "app", Name: "App"},
+		GiteaKnown: true,
+		Probes: []ProbeData{{Label: "Homepage", URL: u, ProbeURL: u, Homepage: true,
+			Last: &probe.Result{URL: u, At: testNow, Err: "context deadline exceeded"}, History: hist}},
+	}
+}
+
+// A homepage has no stored state, so its own checks stand in for one: a
+// homepage whose outage had already counted (2 failed checks in a row, no
+// answer since) stays down across a restart, as a projects-file probe does
+// by its fingerprint. One failed check before the gap and one after it are
+// still a first failure, and a homepage never raises a Fix (carry-over 2).
+func TestCountedHomepageOutageSurvivesARestartGap(t *testing.T) {
+	cases := []struct {
+		name        string
+		pre         string
+		unconfirmed bool
+	}{
+		{"down for an hour before the restart", strings.Repeat("x", 30), false},
+		{"2 failed checks before the restart", "xx", false},
+		{"counted before two restarts", "xx|x", false},
+		{"failed once before the restart", "x", true},
+		{"counted, answered, then failed once", "xxux", true},
+		{"one check written twice", "xd", true},
+		{"up before the restart", "u", true},
+	}
+	for _, tc := range cases {
+		b, _, _ := step(t, testNow, homepageAcrossGap(tc.pre))
+		pr := b.Project.Probes[0]
+		if pr.Up || pr.Unconfirmed != tc.unconfirmed || len(fixes(b.Project)) != 0 {
+			t.Errorf("%s: up %v, unconfirmed %v, Fix %+v; want down, unconfirmed %v, no Fix",
+				tc.name, pr.Up, pr.Unconfirmed, fixes(b.Project), tc.unconfirmed)
+		}
+	}
+}
+
+// While nothing is diffed (the events grace), a container whose outage
+// already counted (stored exited) and that now crash-loops is stored as it
+// is: derive reads no first sighting for a counted outage, and taking each
+// feed's moving "Restarting (1) 5 seconds ago" would rewrite state.json at
+// every feed (carry-over 3).
+func TestKeepSightingLeavesACountedOutageAlone(t *testing.T) {
+	stopped := testNow.Add(-time.Hour)
+	exited, restarting := "exited", "restarting"
+	prev := Fingerprint{Name: "App", Tier: model.TierQuiet, ContainerName: "app", ContainerState: &exited, ContainerSince: &stopped}
+	for i := 0; i < 3; i++ {
+		since := testNow.Add(time.Duration(i)*30*time.Second - 5*time.Second)
+		cur := Fingerprint{Name: "App", ContainerName: "app", ContainerState: &restarting, ContainerSince: &since}
+		k := KeepSighting(prev, cur)
+		if k.ContainerDownSince != nil || k.ContainerState == nil || *k.ContainerState != "exited" || !k.ContainerSince.Equal(stopped) {
+			t.Errorf("feed %d: kept %+v; want exited since %v (stored) and no first sighting", i+1, k, stopped)
+		}
 	}
 }

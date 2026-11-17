@@ -12,7 +12,7 @@ body:
     id: problem
     attributes:
       label: What problem would this solve?
-      description: What are you trying to do that waymark doesn't currently support?
+      description: What are you trying to do that ForgeMap doesn't currently support?
     validations:
       required: false
 

@@ -1,0 +1,9 @@
+{{define "main"}}
+<div class="bare-main narrow">
+  <section class="form-card">
+    <h1>{{icon "octagon-alert"}}This form came from another address</h1>
+    <p>Refused, so nothing was changed. The browser said: <code>{{.Data}}</code>.</p>
+    <p>Behind a reverse proxy? Let it pass the <code>Host</code> header, or set <code>X-Forwarded-Host</code>.</p>
+  </section>
+</div>
+{{end}}

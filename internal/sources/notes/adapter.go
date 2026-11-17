@@ -18,8 +18,8 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/Will-Luck/waymark/internal/mdlite"
-	"github.com/Will-Luck/waymark/internal/registry"
+	"github.com/Will-Luck/forgemap/internal/mdlite"
+	"github.com/Will-Luck/forgemap/internal/registry"
 )
 
 // Adapter reads one kind of notes folder (config notes.type). Type none has

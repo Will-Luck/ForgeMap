@@ -1,5 +1,6 @@
 // Entry module on every page. Everything here is an enhancement: the pages
 // read the same without it.
+import "./head.js";
 import "./theme.js";
 import "./time.js";
 import "./palette.js";
@@ -15,3 +16,4 @@ whenActive(() => {
 if (document.querySelector("[data-ideas]")) import("./ideas.js");
 if (document.querySelector("[data-heat]")) import("./heat.js");
 if (document.getElementById("graph")) import("./map.js");
+if (document.querySelector("form[data-enhance]")) import("./forms.js");

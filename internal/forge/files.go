@@ -75,7 +75,7 @@ func ReadFiles(ctx context.Context, src FileSource, repo Repo, planDirs []string
 	return f, nil
 }
 
-// Changelog is what Waymark reads from a Keep a Changelog file.
+// Changelog is what ForgeMap reads from a Keep a Changelog file.
 type Changelog struct {
 	// Unreleased holds the top-level bullets under [Unreleased], in order.
 	Unreleased  []string
@@ -230,7 +230,7 @@ type Filed struct {
 }
 
 // FiledIdeas maps idea ids to the issue whose body carries marker<id> (the
-// marker taken literally, such as "waymark-idea:"). When several issues carry
+// marker taken literally, such as "forgemap-idea:"). When several issues carry
 // the same id the oldest wins. An empty marker finds nothing.
 func FiledIdeas(issues []Issue, marker string) map[string]Filed {
 	out := map[string]Filed{}

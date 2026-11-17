@@ -1,5 +1,5 @@
 // Package github is a read-only client for the GitHub REST and GraphQL calls
-// Waymark makes. Without a token only FetchMirror runs (60 requests an hour);
+// ForgeMap makes. Without a token only FetchMirror runs (60 requests an hour);
 // full detail needs one. Every GET is conditional on the previous ETag, and the
 // token is only ever sent as "Authorization: Bearer <t>" to the configured base.
 package github
@@ -19,7 +19,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/Will-Luck/waymark/internal/forge"
+	"github.com/Will-Luck/forgemap/internal/forge"
 )
 
 const (
@@ -46,8 +46,17 @@ type Client struct {
 	Token string
 	HTTP  *http.Client
 	// UserAgent goes with every request (GitHub asks every API client for
-	// one); New sets waymark/dev.
+	// one); New sets ForgeMap/dev.
 	UserAgent string
+	// Retry tries a read again when it failed fast (forge.Retry); tests make
+	// it wait nothing.
+	Retry forge.Retry
+	// spent marks an allowance pool ("core", "graphql", "search") whose last
+	// answer said none is left, with the reset that answer named (pace).
+	spent map[string]time.Time
+	// tags keeps each repo's tag list, by lower-case full name, with the
+	// pushed_at it was read at (tagsFor).
+	tags map[string]keptTags
 
 	mu        sync.Mutex
 	cache     map[string]*cached
@@ -56,6 +65,9 @@ type Client struct {
 	tick      uint64
 	// scope is the search qualifiers for the owners ListRepos last read.
 	scope []string
+	// others: the last ListRepos had no owners, found none of the token
+	// user's own, and the token sees other repos (OthersSeen).
+	others bool
 	// now is the clock a Retry-After counts from (nil: time.Now).
 	now func() time.Time
 }
@@ -66,6 +78,10 @@ func (c *Client) clock() time.Time {
 	}
 	return time.Now()
 }
+
+// SetClock makes the client read now (the app's clock) for when a rate limit
+// ends. Call it before the first request.
+func (c *Client) SetClock(now func() time.Time) { c.now = now }
 
 // New returns a client for the forge with config id id. An empty base means
 // https://api.github.com.
@@ -78,7 +94,7 @@ func New(id, base, token string) *Client {
 		Base:      strings.TrimRight(base, "/"),
 		Token:     token,
 		HTTP:      &http.Client{Timeout: 20 * time.Second},
-		UserAgent: "waymark/dev",
+		UserAgent: "ForgeMap/dev",
 		maxCache:  cacheBytes,
 	}
 }
@@ -91,6 +107,9 @@ type HTTPError struct {
 
 func (e *HTTPError) Error() string { return fmt.Sprintf("github %s: HTTP %d", e.Path, e.Status) }
 
+// HTTPStatus is the answer's status, for forge.Status.
+func (e *HTTPError) HTTPStatus() int { return e.Status }
+
 func hasStatus(err error, code int) bool {
 	var he *HTTPError
 	return errors.As(err, &he) && he.Status == code
@@ -98,6 +117,15 @@ func hasStatus(err error, code int) bool {
 
 // IsNotFound reports a 404 (missing file, repo or owner).
 func IsNotFound(err error) bool { return hasStatus(err, http.StatusNotFound) }
+
+// OthersSeen reports whether the last ListRepos, with no owners and none of
+// the token user's own, found that the token sees other repos
+// (forge.OthersSeer).
+func (c *Client) OthersSeen() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.others
+}
 
 // rateLimitError carries when the spent allowance comes back. It is the same
 // for every repo, so callers pass it on unwrapped. Its words name no time:
@@ -151,19 +179,49 @@ func (c *Client) statusError(resp *http.Response, where string) error {
 	return &HTTPError{Status: resp.StatusCode, Path: where}
 }
 
-func (c *Client) send(req *http.Request, where string) (*http.Response, error) {
-	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
-	if c.UserAgent != "" {
-		req.Header.Set("User-Agent", c.UserAgent)
+// ratePool is the allowance a request draws on: GraphQL and search have
+// their own; every other REST call shares "core".
+func ratePool(where string) string {
+	switch {
+	case where == "/graphql":
+		return "graphql"
+	case strings.HasPrefix(where, "/search/"):
+		return "search"
 	}
-	if c.Token != "" {
-		req.Header.Set("Authorization", "Bearer "+c.Token)
+	return "core"
+}
+
+// send makes one request, built afresh by build for each try (Retry), with
+// the headers every request carries. When the last answer from the request's
+// pool said none is left, the request is not made: it would be refused. It
+// fails as the rate limit instead, once; the app's wait decides the rest.
+func (c *Client) send(ctx context.Context, where string, build func() (*http.Request, error)) (*http.Response, error) {
+	pool := ratePool(where)
+	c.mu.Lock()
+	reset, spent := c.spent[pool]
+	delete(c.spent, pool)
+	c.mu.Unlock()
+	if spent && c.clock().Before(reset) {
+		return nil, &rateLimitError{reset: reset, noToken: c.Token == ""}
 	}
 	hc := c.HTTP
 	if hc == nil {
 		hc = http.DefaultClient
 	}
-	resp, err := hc.Do(req)
+	resp, err := c.Retry.Do(ctx, func() (*http.Response, error) {
+		req, err := build()
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+		if c.UserAgent != "" {
+			req.Header.Set("User-Agent", c.UserAgent)
+		}
+		if c.Token != "" {
+			req.Header.Set("Authorization", "Bearer "+c.Token)
+		}
+		return hc.Do(req)
+	})
 	if err != nil {
 		var ue *url.Error
 		if errors.As(err, &ue) {
@@ -171,7 +229,26 @@ func (c *Client) send(req *http.Request, where string) (*http.Response, error) {
 		}
 		return nil, fmt.Errorf("github %s: %w", where, err)
 	}
+	c.pace(pool, resp)
 	return resp, nil
+}
+
+// pace marks pool spent when an answer (not a refusal, which is already a
+// rate limit) says no request is left and when the allowance comes back.
+func (c *Client) pace(pool string, resp *http.Response) {
+	if resp.StatusCode >= 400 || resp.Header.Get("X-RateLimit-Remaining") != "0" {
+		return
+	}
+	sec, err := strconv.ParseInt(resp.Header.Get("X-RateLimit-Reset"), 10, 64)
+	if err != nil {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.spent == nil {
+		c.spent = map[string]time.Time{}
+	}
+	c.spent[pool] = time.Unix(sec, 0)
 }
 
 func (c *Client) cacheGet(key string) (cached, bool) {
@@ -220,27 +297,32 @@ func (c *Client) cachePut(key string, e cached) {
 // do GETs path with query q, accepting accept, conditional on the last ETag.
 // A 304 answers from the cache, Link header included.
 func (c *Client) do(ctx context.Context, path string, q url.Values, accept string) ([]byte, http.Header, error) {
+	return c.read(ctx, path, q, accept, maxBody)
+}
+
+// read is do returning at most limit bytes of the answer: a longer one is cut
+// there, so it fails to decode.
+func (c *Client) read(ctx context.Context, path string, q url.Values, accept string, limit int64) ([]byte, http.Header, error) {
 	where := path
 	if len(q) > 0 {
 		where += "?" + q.Encode()
 	}
 	u := strings.TrimRight(c.Base, "/") + where
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
-	if err != nil {
-		return nil, nil, err
-	}
-	req.Header.Set("Accept", accept)
 	key := accept + " " + u
-	// A commit window's since moves on every call, so its pages never recur.
-	cacheable := !q.Has("since")
-	var prev cached
-	havePrev := false
-	if cacheable {
-		if prev, havePrev = c.cacheGet(key); havePrev {
+	// Every GET recurs (a commit window asks from the start of a UTC day), so
+	// each is conditional on its last ETag.
+	prev, havePrev := c.cacheGet(key)
+	resp, err := c.send(ctx, where, func() (*http.Request, error) {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Accept", accept)
+		if havePrev {
 			req.Header.Set("If-None-Match", prev.etag)
 		}
-	}
-	resp, err := c.send(req, where)
+		return req, nil
+	})
 	if err != nil {
 		return nil, nil, err
 	}
@@ -255,18 +337,23 @@ func (c *Client) do(ctx context.Context, path string, q url.Values, accept strin
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		return nil, resp.Header, c.statusError(resp, where)
 	}
-	body, err := io.ReadAll(io.LimitReader(resp.Body, maxBody))
+	body, err := io.ReadAll(io.LimitReader(resp.Body, limit))
 	if err != nil {
 		return nil, nil, fmt.Errorf("github %s: %w", where, err)
 	}
-	if etag := resp.Header.Get("ETag"); cacheable && etag != "" {
+	if etag := resp.Header.Get("ETag"); etag != "" {
 		c.cachePut(key, cached{etag: etag, body: body, link: resp.Header.Get("Link")})
 	}
 	return body, resp.Header, nil
 }
 
 func (c *Client) getJSON(ctx context.Context, path string, q url.Values, out any) (http.Header, error) {
-	body, h, err := c.do(ctx, path, q, jsonType)
+	return c.readJSON(ctx, path, q, maxBody, out)
+}
+
+// readJSON is read (JSON accepted) decoded into out.
+func (c *Client) readJSON(ctx context.Context, path string, q url.Values, limit int64, out any) (http.Header, error) {
+	body, h, err := c.read(ctx, path, q, jsonType, limit)
 	if err != nil {
 		return h, err
 	}
@@ -282,13 +369,15 @@ func (c *Client) graphql(ctx context.Context, query string, vars map[string]any,
 	if err != nil {
 		return err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(c.Base, "/")+"/graphql", bytes.NewReader(payload))
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json")
-	resp, err := c.send(req, "/graphql")
+	resp, err := c.send(ctx, "/graphql", func() (*http.Request, error) {
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(c.Base, "/")+"/graphql", bytes.NewReader(payload))
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Accept", "application/json")
+		return req, nil
+	})
 	if err != nil {
 		return err
 	}
@@ -380,7 +469,8 @@ func (c *Client) ListRepos(ctx context.Context, owners []string) ([]forge.Repo, 
 	if err != nil {
 		return nil, err
 	}
-	if len(owners) == 0 {
+	noOwners := len(owners) == 0
+	if noOwners {
 		owners = []string{me.Login}
 	}
 	var all []forge.Repo
@@ -417,8 +507,28 @@ func (c *Client) ListRepos(ctx context.Context, owners []string) ([]forge.Repo, 
 			}
 		}
 	}
+	others := false
+	if noOwners && len(all) == 0 {
+		// None of the user's own: does the token see an organisation's
+		// repos, or one it collaborates on? One is enough to say so.
+		var some []ghRepo
+		_, err := c.getJSON(ctx, "/user/repos", url.Values{"affiliation": {"collaborator,organization_member"}, "per_page": {"1"}}, &some)
+		others = err == nil && len(some) > 0
+		// The list stands, but a spent allowance stays marked for the next
+		// read (send took the mark to refuse this one, or GitHub refused it),
+		// which fails as the limit without a request.
+		var rl *rateLimitError
+		if errors.As(err, &rl) {
+			c.mu.Lock()
+			if c.spent == nil {
+				c.spent = map[string]time.Time{}
+			}
+			c.spent[ratePool("/user/repos")] = rl.reset
+			c.mu.Unlock()
+		}
+	}
 	c.mu.Lock()
-	c.scope = scope
+	c.scope, c.others = scope, others
 	c.mu.Unlock()
 	return all, nil
 }
@@ -458,9 +568,10 @@ func (c *Client) repoPages(ctx context.Context, path string, extra url.Values) (
 	return out, nil
 }
 
-// FetchMirror is the v0.1 three-call read of a public repo: the repo, its
-// open issues (pull requests dropped) and its latest release. It works with
-// or without a token, and a rate limit is returned as is.
+// FetchMirror is the light read of a public repo: the repo, its open issues
+// (pull requests dropped; not asked for when the repo has none) and its
+// latest release. It works with or without a token, and a rate limit is
+// returned as is.
 func (c *Client) FetchMirror(ctx context.Context, full string, now time.Time) (*forge.Mirror, error) {
 	if _, _, ok := strings.Cut(full, "/"); !ok {
 		return nil, fmt.Errorf("github repo %q is not owner/name", full)
@@ -469,18 +580,22 @@ func (c *Client) FetchMirror(ctx context.Context, full string, now time.Time) (*
 	var meta ghRepo
 	if _, err := c.getJSON(ctx, base, nil, &meta); err != nil {
 		if IsNotFound(err) {
-			return nil, fmt.Errorf("github %s: not found (private or renamed?)", full)
+			return nil, &mirrorGone{full: full, err: err}
 		}
 		return nil, err
 	}
-	var all []forge.Issue
-	if _, err := c.getJSON(ctx, base+"/issues", url.Values{"state": {"open"}, "per_page": {strconv.Itoa(pageSize)}}, &all); err != nil && !IsNotFound(err) {
-		return nil, err
-	}
 	var issues []forge.Issue
-	for _, is := range all {
-		if !is.IsPull() {
-			issues = append(issues, is)
+	// open_issues_count counts open issues and pull requests together: at 0
+	// there is neither, and the list is not asked for.
+	if meta.OpenIssues > 0 {
+		var all []forge.Issue
+		if _, err := c.getJSON(ctx, base+"/issues", url.Values{"state": {"open"}, "per_page": {strconv.Itoa(pageSize)}}, &all); err != nil && !IsNotFound(err) {
+			return nil, err
+		}
+		for _, is := range all {
+			if !is.IsPull() {
+				issues = append(issues, is)
+			}
 		}
 	}
 	m := &forge.Mirror{Forge: c.id, FullName: meta.FullName, HTMLURL: meta.HTMLURL, Private: meta.Private, Stars: meta.Stars, OpenIssues: len(issues), FetchedAt: now.UTC()}
@@ -495,6 +610,16 @@ func (c *Client) FetchMirror(ctx context.Context, full string, now time.Time) (*
 	}
 	return m, nil
 }
+
+// mirrorGone is a mirror whose repo answers 404. Its words are what the
+// forge's status shows; it unwraps to the 404, so IsNotFound holds.
+type mirrorGone struct {
+	full string
+	err  error
+}
+
+func (e *mirrorGone) Error() string { return "github " + e.full + ": not found (private or renamed?)" }
+func (e *mirrorGone) Unwrap() error { return e.err }
 
 const heatmapQuery = `query {
   viewer {

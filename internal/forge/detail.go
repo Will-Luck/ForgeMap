@@ -15,7 +15,7 @@ func SortByUpdated(is []Issue) []Issue {
 	return is
 }
 
-// Detail is everything Waymark reads about one repo, apart from files.
+// Detail is everything ForgeMap reads about one repo, apart from files.
 type Detail struct {
 	Repo     Repo
 	Tags     []Tag
@@ -44,7 +44,7 @@ func (d *Detail) InProgress() bool {
 	return false
 }
 
-// Files is what Waymark reads from a repo's tree.
+// Files is what ForgeMap reads from a repo's tree.
 type Files struct {
 	Changelog    *Changelog // nil when there is no CHANGELOG.md
 	ChangelogURL string

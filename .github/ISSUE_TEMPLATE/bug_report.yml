@@ -8,7 +8,7 @@ body:
       value: |
         Thanks for taking the time to report a bug. **All fields below are optional**: fill in what you can and leave blank what you can't. A report with some data is more useful than no report at all.
 
-        **Remove every token** from anything you paste. Waymark never prints one, but a config file or a `docker run` line can hold one.
+        **Remove every token** from anything you paste. ForgeMap never prints one, but a config file or a `docker run` line can hold one.
 
   - type: textarea
     id: what-happened
@@ -28,9 +28,9 @@ body:
   - type: input
     id: version
     attributes:
-      label: waymark version
-      description: The first log line says it ("waymark v0.2.0 listening on ...").
-      placeholder: e.g. v0.2.0, or "latest" if on the :latest tag
+      label: ForgeMap version
+      description: The first log line says it ("ForgeMap v0.3.0 listening on ...").
+      placeholder: e.g. v0.3.0, or "latest" if on the :latest tag
     validations:
       required: false
 
@@ -39,8 +39,8 @@ body:
     attributes:
       label: How you run it
       options:
-        - GHCR (ghcr.io/will-luck/waymark)
-        - Docker Hub (willluck/waymark)
+        - GHCR (ghcr.io/will-luck/forgemap)
+        - Docker Hub (willluck/forgemap)
         - Release binary
         - Built from source
         - Other
@@ -61,7 +61,7 @@ body:
     id: config
     attributes:
       label: Your config, tokens removed
-      description: waymark.yml (or the environment variables you set). Replace each token with `REDACTED`.
+      description: forgemap.yml (or the environment variables you set). Replace each token with `REDACTED`.
       render: yaml
     validations:
       required: false

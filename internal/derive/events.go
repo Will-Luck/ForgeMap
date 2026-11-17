@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Will-Luck/waymark/internal/forge"
-	"github.com/Will-Luck/waymark/internal/model"
+	"github.com/Will-Luck/forgemap/internal/forge"
+	"github.com/Will-Luck/forgemap/internal/model"
 )
 
 // CIState is what an event needs to know about one run.
@@ -196,7 +196,9 @@ func Merge(prev, cur Fingerprint) Fingerprint {
 // prev as it is, but for when its container was first seen not running,
 // which follows cur. Without it each feed would date that sighting afresh,
 // and a stop would not be confirmed until the grace ends. Diff never reads
-// it, so no event moves.
+// it, so no event moves. An outage that already counted (the stored state
+// is not running) is left alone: derive reads no sighting for it, and
+// taking cur's would rewrite the store at every feed of a crash loop.
 func KeepSighting(prev, cur Fingerprint) Fingerprint {
 	if cur.ContainerName == "" || cur.ContainerName != prev.ContainerName {
 		return prev
@@ -207,7 +209,7 @@ func KeepSighting(prev, cur Fingerprint) Fingerprint {
 	case cur.ContainerState == nil: // the feed did not see it
 	case *cur.ContainerState == "running":
 		prev.ContainerDownSince = nil
-	default:
+	case prev.ContainerState != nil && *prev.ContainerState == "running":
 		// Confirmed, while the stored state still says running: from when
 		// the outage began, so the next look stays confirmed.
 		prev.ContainerDownSince = cur.ContainerSince
@@ -258,9 +260,11 @@ func Diff(prev, cur map[string]Fingerprint, now time.Time) []model.Event {
 			case is:
 				add("container", "running:"+minute, model.LevelGood, "Container "+c.ContainerName+" is running again", "")
 			case was || *c.ContainerState == "missing":
+				// The card's word for the state (stateWord): "is restarting",
+				// "is paused", "is missing", and "stopped" for the rest.
 				text := "Container " + c.ContainerName + " stopped"
-				if *c.ContainerState == "missing" {
-					text = "Container " + c.ContainerName + " is missing"
+				if w := stateWord(*c.ContainerState); w != "stopped" {
+					text = "Container " + c.ContainerName + " is " + w
 				}
 				// Dated from the stop (ContainerSince); the ID keeps the
 				// minute it was confirmed.

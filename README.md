@@ -1,30 +1,32 @@
-# Waymark
+# ForgeMap
 
 A **self-hosted**, read-only page that shows every project on your Gitea,
 Forgejo and GitHub accounts: what is active, what is deployed, and what waits
 on you.
 
-[![Latest release](https://img.shields.io/github/v/release/Will-Luck/waymark)](https://github.com/Will-Luck/waymark/releases)
+[![Latest release](https://img.shields.io/github/v/release/Will-Luck/forgemap)](https://github.com/Will-Luck/forgemap/releases)
 [![Licence: MIT](https://img.shields.io/badge/licence-MIT-blue)](LICENSE)
-[![Image on ghcr.io](https://img.shields.io/badge/image-ghcr.io-blue?logo=docker&logoColor=white)](https://github.com/Will-Luck/waymark/pkgs/container/waymark)
+[![Image on ghcr.io](https://img.shields.io/badge/image-ghcr.io-blue?logo=docker&logoColor=white)](https://github.com/Will-Luck/forgemap/pkgs/container/forgemap)
 
-![The Waymark overview with demo data: the four tabs, six count tiles and a strip of weekly commits](docs/images/tour-overview.png)
+![The ForgeMap overview with demo data: the four tabs, six count tiles and a strip of weekly commits](docs/images/tour-overview.png)
 
-> - **There is no login:** anyone who can reach the page sees everything it
->   shows, and its JSON API serves the same data.
-> - **Shown to them:** repo names, issue and PR titles, commit messages and
->   source errors; if set up, also container names, probe URLs and note text.
-> - **Private repos are hidden** by default; show them only behind a login.
-> - **Keep it private:** put Waymark behind a reverse proxy that asks for a
->   login, or keep it on your LAN or VPN. See [Privacy](https://github.com/Will-Luck/waymark/wiki/Privacy-and-Security)
->   for everything it shows.
+> - **Sign-in:** set up in the browser (the first way under Install), ForgeMap has one account. It always guards
+>   **Settings**, and, with **Only me, after signing in** (the default; in Settings, **Ask for sign-in to see the
+>   page**), the whole page, its JSON API and the feed.
+> - **Shown to whoever may view:** repo names, issue and PR titles, commit messages and source errors; when
+>   configured, also container names, probe URLs and note text.
+> - **Private repos are hidden** by default; show them only while sign-in is on, or behind a login.
+> - **A config file or the quick-start variables mean no sign-in:** anyone who can reach the page sees what it
+>   shows. Keep it on your LAN or VPN, or behind a reverse proxy that asks for a login. See
+>   [Privacy](https://github.com/Will-Luck/forgemap/wiki/Privacy-and-Security) for everything it shows.
+> - **Examples:** [Docker Compose](https://github.com/Will-Luck/forgemap/wiki/Installation#docker-compose) and [behind a login](https://github.com/Will-Luck/forgemap/wiki/Installation#behind-a-login) with Caddy.
 
 ## Try it in one command
 
 ```bash
 docker run --rm \
   -p 127.0.0.1:8080:8080 \
-  ghcr.io/will-luck/waymark -demo
+  ghcr.io/will-luck/forgemap -demo
 ```
 
 Open http://127.0.0.1:8080 to see an invented team's projects from a
@@ -43,6 +45,7 @@ The header has four tabs: **Overview**, **Ideas**, **Ship log** and **Map**.
 | [Ideas](#ideas) | Tab | What could we do next? |
 | [Ship log](#ship-log) | Tab | What have we shipped? |
 | [Map](#map) | Tab | How do projects relate? |
+| [Setup and Settings](#setup-and-settings) | First start, then Settings | How do I set it up? |
 
 ### Overview
 
@@ -86,19 +89,20 @@ marked.
 ### Ideas
 
 **Feature ideas** from issues labelled `idea` or `enhancement`, and from an
-optional ideas file. Filter them by kind and size, or press **Surprise me**.
+optional ideas file. Filter them by kind, size, filed or not and project, or
+press **Surprise me**.
 
 An idea that is not an issue yet has a **File as issue** button. With no
 ideas set up, the page stays hidden.
 
-![The Ideas page: counts by kind, Kind and Size filters, a Surprise me button and three idea cards: one already filed as #15, two with File as issue buttons](docs/images/tour-ideas.png)
+![The Ideas page: Kind, Size and Issue filters with counts, a Surprise me button and three idea cards: one already filed as #15, two with File as issue buttons](docs/images/tour-ideas.png)
 
 ### Ship log
 
 **A year of commits per day**, your busiest day and current streak, then
 every release of the last 18 months, by month.
 
-![The ship log: 967 commits in 53 weeks, a heatmap of commits per day and the first release in the timeline](docs/images/tour-ships.png)
+![The ship log: 966 commits in 53 weeks, a heatmap of commits per day and the first release in the timeline](docs/images/tour-ships.png)
 
 ### Map
 
@@ -112,7 +116,8 @@ size shows the last 12 weeks of commits, and lines join related projects.
 Press **Ctrl K** (Cmd K on a Mac, or **/**) and type a few letters to jump to
 any project, idea or issue.
 
-It also runs commands: **Refresh now**, **Toggle theme** and **Surprise me**.
+It also runs commands: **Refresh now** (unless `refresh: false` turns it
+off), **Toggle theme** and **Surprise me**.
 
 ![The search palette with bea typed: two matching projects and four ideas, with keyboard hints in the footer](docs/images/tour-search.png)
 
@@ -125,10 +130,21 @@ button. Every page also fits a **phone**.
 |---|---|
 | <img src="docs/images/tour-dark.png" alt="The overview in the dark theme" width="560"> | <img src="docs/images/tour-phone.png" alt="The overview on a phone: stat tiles in two columns and the first Needs you card" width="162"> |
 
+### Setup and Settings
+
+**Set up in the browser:** make your account in the first 5 minutes after
+the start and connect a forge.
+
+![Setup step 2: a Gitea forge connected as mark, with its owners ticked and its certificate trusted](docs/images/tour-setup.png)
+
+**Settings:** every setting in one place, applied without a restart.
+
+![Settings: the forges (one with a trusted certificate), the page's title and time zone, and who can see it](docs/images/tour-settings.png)
+
 ## What it reads
 
 Nothing on the page is typed in by hand: every state comes from these
-sources. Waymark needs no LLM and no database, and it **only reads**: it
+sources. ForgeMap needs no LLM and no database, and it **only reads**: it
 never writes to a forge and never shows your token.
 
 | Source | What it adds | Needed? |
@@ -143,27 +159,51 @@ never writes to a forge and never shows your token.
 You need **at least one forge**. Without a projects file, each repo is a
 project. Repo homepages are probed by default.
 
-Every setting is in the [Configuration Reference](https://github.com/Will-Luck/waymark/wiki/Configuration-Reference).
+Every setting is in the [Configuration Reference](https://github.com/Will-Luck/forgemap/wiki/Configuration-Reference).
 
 ## Install
 
-Each command publishes the port on `127.0.0.1` only. Read the no-login note
-above before you open it up.
+Each command publishes the port on `127.0.0.1` only. Finish setup before you
+publish the port anywhere else.
 
-**GitHub only:** give it a read-only token and the owners to track, and each
-of their public repos becomes a project.
+**Set it up in the browser:** no token or config in the command.
 
 <details>
 <summary>Show the command</summary>
 
 ```bash
-docker run -d --name waymark --restart unless-stopped \
+docker run -d --name forgemap --restart unless-stopped \
+  -p 127.0.0.1:8080:8080 \
+  -v forgemap-data:/data \
+  ghcr.io/will-luck/forgemap:latest
+docker logs forgemap
+```
+
+</details>
+
+Open http://127.0.0.1:8080 within 5 minutes of the start (a restart opens
+setup again), make your account and connect your forges. In those minutes
+anyone who can open the page can make the account: do not publish the port
+before it exists. Forgot the password?
+`docker exec forgemap forgemap -reset-password`.
+
+Or set it with variables or a file (no sign-in):
+
+**GitHub only:** give it a read-only token and the owners to track, and each
+of their public repos becomes a project (forks too, with
+`-e FORGEMAP_FORKS=true`).
+
+<details>
+<summary>Show the command</summary>
+
+```bash
+docker run -d --name forgemap --restart unless-stopped \
   -p 127.0.0.1:8080:8080 \
   -e GITHUB_TOKEN=github_pat_... \
   -e GITHUB_OWNERS=your-user,your-org \
   -e TZ=Europe/Paris \
-  -v waymark-data:/data \
-  ghcr.io/will-luck/waymark:latest
+  -v forgemap-data:/data \
+  ghcr.io/will-luck/forgemap:latest
 ```
 
 </details>
@@ -175,13 +215,13 @@ and the owners to track.
 <summary>Show the command</summary>
 
 ```bash
-docker run -d --name waymark --restart unless-stopped \
+docker run -d --name forgemap --restart unless-stopped \
   -p 127.0.0.1:8080:8080 \
   -e GITEA_URL=https://git.example.com \
   -e GITEA_TOKEN=... \
   -e GITEA_OWNERS=your-user,your-org \
-  -v waymark-data:/data \
-  ghcr.io/will-luck/waymark:latest
+  -v forgemap-data:/data \
+  ghcr.io/will-luck/forgemap:latest
 ```
 
 </details>
@@ -193,11 +233,11 @@ the same name on both forges becomes one project.
 <summary>Show the config file and the command</summary>
 
 ```yaml
-# config/waymark.yml
+# config/forgemap.yml
 site:
   title: Team status
   timezone: Europe/Paris
-include_private: false   # true shows private repos: only behind a login
+include_private: false   # true shows private repos: a config file has no sign-in, so only behind a login
 forges:
   - id: gitea
     type: gitea          # or forgejo
@@ -212,33 +252,33 @@ forges:
 ```
 
 ```bash
-docker run -d --name waymark --restart unless-stopped \
+docker run -d --name forgemap --restart unless-stopped \
   -p 127.0.0.1:8080:8080 \
   -e GITEA_TOKEN=... -e GITHUB_TOKEN=... \
   -v "$PWD/config:/config:ro" \
-  -v waymark-data:/data \
-  ghcr.io/will-luck/waymark:latest
+  -v forgemap-data:/data \
+  ghcr.io/will-luck/forgemap:latest
 ```
 
 </details>
 
 Token scopes, private repos, Docker options, images and binaries are in the
-[install guide](https://github.com/Will-Luck/waymark/wiki/Installation).
+[install guide](https://github.com/Will-Luck/forgemap/wiki/Installation).
 
 ## Documentation
 
 | Page | What is in it |
 |---|---|
-| [Install](https://github.com/Will-Luck/waymark/wiki/Installation) | Each setup in full, token scopes, Docker, images and binaries |
-| [Privacy](https://github.com/Will-Luck/waymark/wiki/Privacy-and-Security) | Everything the page shows, and how to keep it private |
-| [Features](https://github.com/Will-Luck/waymark/wiki/Features) | States, the Needs you rules, notes, ideas, plans and containers |
-| [FAQ](https://github.com/Will-Luck/waymark/wiki/FAQ-and-Known-Limits) | Common questions and known limits |
-| [Configuration](https://github.com/Will-Luck/waymark/wiki/Configuration-Reference) | Every setting, its default and an example |
+| [Install](https://github.com/Will-Luck/forgemap/wiki/Installation) | Each setup in full, token scopes, Docker, images and binaries |
+| [Privacy](https://github.com/Will-Luck/forgemap/wiki/Privacy-and-Security) | Everything the page shows, and how to keep it private |
+| [Features](https://github.com/Will-Luck/forgemap/wiki/Features) | States, the Needs you rules, notes, ideas, plans and containers |
+| [FAQ](https://github.com/Will-Luck/forgemap/wiki/FAQ-and-Known-Limits) | Common questions and known limits |
+| [Configuration](https://github.com/Will-Luck/forgemap/wiki/Configuration-Reference) | Every setting, its default and an example |
 | [Changelog](CHANGELOG.md) | What changed in each release |
 
 ## About
 
-Waymark started as a status page I built for my own homelab, to see all of
+ForgeMap started as a status page I built for my own homelab, to see all of
 my projects in one place. I adapted it so anyone with Gitea, Forgejo or
 GitHub can run it, in case others find it useful too.
 

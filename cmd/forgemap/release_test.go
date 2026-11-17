@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 
@@ -86,6 +87,25 @@ func TestReleaseLatestOnlyForReleases(t *testing.T) {
 	}
 	if rel["make_latest"] != notPrerelease || rel["prerelease"] != "${{ contains(github.ref_name, '-') }}" {
 		t.Errorf("GitHub release make_latest %v, prerelease %v", rel["make_latest"], rel["prerelease"])
+	}
+}
+
+// The release publishes the images the README and the CHANGELOG name,
+// whatever the GitHub repo is called when the tag is pushed: an image name
+// taken from github.repository would publish a tag pushed before the repo's
+// rename as ghcr.io/will-luck/waymark.
+func TestReleaseImageNames(t *testing.T) {
+	ss := steps(t, ".github/workflows/release.yml")
+	meta := with(ss, "docker/metadata-action")
+	if meta == nil {
+		t.Fatal("no docker/metadata-action step")
+	}
+	want := []string{"ghcr.io/will-luck/forgemap", "docker.io/willluck/forgemap"}
+	if images := strings.Fields(fmt.Sprint(meta["images"])); !slices.Equal(images, want) {
+		t.Errorf("release images %q, want %q", images, want)
+	}
+	if r := with(ss, "peter-evans/dockerhub-description"); r == nil || r["repository"] != "willluck/forgemap" {
+		t.Errorf("the README sync writes to %v, want willluck/forgemap", r)
 	}
 }
 

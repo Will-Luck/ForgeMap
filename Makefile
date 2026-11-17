@@ -1,7 +1,7 @@
 VERSION  ?= dev
-BIN      ?= waymark
-IMAGE    ?= waymark:$(VERSION)
-MAIN_PKG ?= ./cmd/waymark
+BIN      ?= forgemap
+IMAGE    ?= forgemap:$(VERSION)
+MAIN_PKG ?= ./cmd/forgemap
 LDFLAGS  := -s -w -X main.version=$(VERSION)
 
 .PHONY: all build test vet fmt check image fixture fixtures demo

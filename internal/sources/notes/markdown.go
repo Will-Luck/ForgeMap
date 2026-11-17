@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Will-Luck/waymark/internal/registry"
+	"github.com/Will-Luck/forgemap/internal/registry"
 )
 
 // markdown reads a folder of .md files (subfolders too, hidden ones skipped).

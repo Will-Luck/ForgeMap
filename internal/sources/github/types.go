@@ -4,7 +4,7 @@ import (
 	"path"
 	"strings"
 
-	"github.com/Will-Luck/waymark/internal/forge"
+	"github.com/Will-Luck/forgemap/internal/forge"
 )
 
 // ghRepo is a repo as GitHub's REST API lists it.
@@ -39,6 +39,7 @@ func (g ghRepo) repo(forgeID string) forge.Repo {
 		ID: g.ID, Name: g.Name, FullName: g.FullName, Description: g.Description, Owner: g.Owner, Forge: forgeID,
 		Private: g.Private, Fork: g.Fork, Mirror: g.MirrorURL != "", Archived: g.Archived, HTMLURL: g.HTMLURL,
 		Website: g.Homepage, DefaultBranch: g.DefaultBranch, Stars: g.Stars, OpenIssues: g.OpenIssues, UpdatedAt: g.UpdatedAt,
+		PushedAt: g.PushedAt,
 	}
 	if g.PushedAt.After(g.UpdatedAt.Time) {
 		r.UpdatedAt = g.PushedAt

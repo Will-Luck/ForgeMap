@@ -11,9 +11,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Will-Luck/waymark/internal/config"
-	"github.com/Will-Luck/waymark/internal/forge"
-	"github.com/Will-Luck/waymark/internal/model"
+	"github.com/Will-Luck/forgemap/internal/config"
+	"github.com/Will-Luck/forgemap/internal/forge"
+	"github.com/Will-Luck/forgemap/internal/model"
 )
 
 // Events stored while include_private was true do not come back after a

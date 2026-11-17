@@ -78,12 +78,16 @@ export function fragment(html) {
 }
 
 // Run update inside a view transition when the browser has them, motion is
-// allowed and the target is on screen; otherwise just run it.
+// allowed and the target is on screen; otherwise just run it. A transition
+// that a newer one skips still runs its update, but rejects its ready
+// promise; catch that too, or it is an uncaught error in the console.
 export function transition(update, target) {
   const r = target?.getBoundingClientRect?.();
   const onScreen = !r || (r.bottom > 0 && r.top < window.innerHeight);
   if (document.startViewTransition && motionOK() && !document.hidden && onScreen) {
-    return document.startViewTransition(update).finished.catch(() => {});
+    const vt = document.startViewTransition(update);
+    vt.ready.catch(() => {});
+    return vt.finished.catch(() => {});
   }
   update();
   return Promise.resolve();
@@ -100,3 +104,22 @@ export function pulse(node) {
 export const isTyping = (target) =>
   target instanceof Element &&
   (target.closest("input, textarea, select, [contenteditable=''], [contenteditable='true']") !== null);
+
+// True on an install set up in the browser, which has its own sign-in (the
+// layout marks the page). Elsewhere there is no /signin: a 401 can only come
+// from a proxy in front, and is not this page's to answer.
+export const signInHere = () => document.documentElement.hasAttribute("data-signin");
+
+// On such an install a 401 means the session ended (signed out, a new
+// password, or sign-in turned on): go to sign-in, which brings the reader
+// back here (with no feed key or one-time sign-in token: neither in the
+// address goes on to sign-in). True when it went.
+export function signedOut(r) {
+  if (r.status !== 401 || !signInHere()) return false;
+  const q = new URLSearchParams(location.search);
+  q.delete("key");
+  q.delete("once");
+  const query = q.toString();
+  location.assign("/signin?next=" + encodeURIComponent(location.pathname + (query ? "?" + query : "")));
+  return true;
+}

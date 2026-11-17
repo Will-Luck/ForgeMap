@@ -1,4 +1,4 @@
-// Package store keeps Waymark's only writable state, DATA_DIR/state.json:
+// Package store keeps ForgeMap's only writable state, DATA_DIR/state.json:
 // the event history, probe history and the last per-project fingerprints.
 // Writes are atomic (temp file, fsync, rename).
 package store
@@ -7,14 +7,15 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"sort"
 	"sync"
 	"time"
 
-	"github.com/Will-Luck/waymark/internal/derive"
-	"github.com/Will-Luck/waymark/internal/model"
+	"github.com/Will-Luck/forgemap/internal/derive"
+	"github.com/Will-Luck/forgemap/internal/model"
 )
 
 const (
@@ -46,9 +47,13 @@ type Store struct {
 	wroteAt     time.Time // when Save last wrote the file, by the caller's clock
 	warning     string
 	saveMu      sync.Mutex // one Save at a time (they share the temp file)
+	modeSaid    bool       // the log has said the mode could not be set (under saveMu)
 
 	// beforeWrite, when set (tests), runs between the snapshot and the write.
 	beforeWrite func()
+	// chmod, when set (tests), sets the temp file's mode in place of
+	// f.Chmod, so a file system that refuses modes is seen without one.
+	chmod func(f *os.File, mode os.FileMode) error
 }
 
 // Open reads dir/state.json, creating dir if needed. A missing file is an
@@ -282,8 +287,11 @@ func (s *Store) PruneProbes(keep map[string]bool) {
 	}
 }
 
-// Save writes state.json atomically. A change made while the file is being
-// written is not in it, so the store then stays dirty (or probes-dirty).
+// Save writes state.json atomically, readable by its owner only (0600), like
+// settings.json, where the file system lets it set the mode; where it does
+// not, the file is written all the same and the log says so once. A change
+// made while the file is being written is not in it, so the store then stays
+// dirty (or probes-dirty).
 func (s *Store) Save(now time.Time) error {
 	s.saveMu.Lock()
 	defer s.saveMu.Unlock()
@@ -302,9 +310,19 @@ func (s *Store) Save(now time.Time) error {
 		s.beforeWrite()
 	}
 	tmp := s.path + ".tmp"
-	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
+	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
 	if err != nil {
 		return err
+	}
+	// The mode given above counts only when the file is made: a temp file a
+	// crash left behind keeps its own.
+	chmod := (*os.File).Chmod
+	if s.chmod != nil {
+		chmod = s.chmod
+	}
+	if err := chmod(f, 0o600); err != nil && !s.modeSaid {
+		s.modeSaid = true
+		log.Printf("store: state.json keeps the mode its file system gives, not owner-only: %v", err)
 	}
 	if _, err := f.Write(b); err != nil {
 		f.Close()

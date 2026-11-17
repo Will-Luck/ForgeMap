@@ -6,11 +6,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Will-Luck/waymark/internal/forge"
-	"github.com/Will-Luck/waymark/internal/model"
-	"github.com/Will-Luck/waymark/internal/registry"
-	"github.com/Will-Luck/waymark/internal/sources/docker"
-	"github.com/Will-Luck/waymark/internal/sources/probe"
+	"github.com/Will-Luck/forgemap/internal/forge"
+	"github.com/Will-Luck/forgemap/internal/model"
+	"github.com/Will-Luck/forgemap/internal/registry"
+	"github.com/Will-Luck/forgemap/internal/sources/docker"
+	"github.com/Will-Luck/forgemap/internal/sources/probe"
 )
 
 // wordingEnv knows three forges: a Gitea, GitHub and a Gitea-kind forge on

@@ -4,9 +4,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Will-Luck/waymark/internal/forge"
-	"github.com/Will-Luck/waymark/internal/model"
-	"github.com/Will-Luck/waymark/internal/registry"
+	"github.com/Will-Luck/forgemap/internal/forge"
+	"github.com/Will-Luck/forgemap/internal/model"
+	"github.com/Will-Luck/forgemap/internal/registry"
 )
 
 // zone is a site time zone that is UTC in winter and UTC+1 in summer,
@@ -280,5 +280,35 @@ func TestCountText(t *testing.T) {
 	}
 	if s := CountText(150, true); s != "150+" {
 		t.Error(s)
+	}
+}
+
+// A hold's since is a date-only stamp (parsed as midnight UTC of the date the
+// projects file names). The tier reason reads that date in every zone: west
+// of UTC it said the day before (A5). At a year boundary the year follows
+// the site's zone: 1 Jan 03:00 UTC is still 31 Dec in New York.
+func TestHoldSinceKeepsItsDate(t *testing.T) {
+	since := time.Date(2026, 10, 3, 0, 0, 0, 0, time.UTC)
+	now := time.Date(2026, 10, 31, 22, 0, 0, 0, time.UTC)
+	cases := []struct {
+		zone       string
+		since, now time.Time
+		want       string
+	}{
+		{"America/New_York", since, now, "Parked since 3 Oct"},
+		{"Europe/London", since, now, "Parked since 3 Oct"},
+		{"Pacific/Auckland", since, now, "Parked since 3 Oct"},
+		{"UTC", since, now, "Parked since 3 Oct"},
+		{"America/New_York", time.Date(2025, 12, 31, 0, 0, 0, 0, time.UTC), time.Date(2026, 1, 1, 3, 0, 0, 0, time.UTC), "Parked since 31 Dec"},
+	}
+	for _, tc := range cases {
+		loc, err := time.LoadLocation(tc.zone)
+		if err != nil {
+			t.Fatal(err)
+		}
+		tier, reason := Tier(TierInput{Hold: &registry.Hold{Kind: "parked", Since: tc.since}, Loc: loc}, tc.now)
+		if tier != model.TierHold || reason != tc.want {
+			t.Errorf("%s at %v: %s %q, want hold %q", tc.zone, tc.now, tier, reason, tc.want)
+		}
 	}
 }

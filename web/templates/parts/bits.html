@@ -5,7 +5,7 @@
 {{define "chipLink"}}{{if .Href}}<a class="chip lv-{{.Level}}" href="{{.Href}}">{{icon .Icon}}<span>{{.Text}}</span></a>{{else}}{{template "chip" .}}{{end}}{{end}}
 
 {{define "card"}}
-<article class="card-wrap {{tierClass .}}" data-live-card="{{.Slug}}" data-slug="{{.Slug}}" data-cat="{{.Category}}" data-hash="{{.Hash}}">
+<article class="card-wrap {{tierClass .}}" data-live-card="{{.Slug}}" data-slug="{{.Slug}}" data-cat="{{.Category}}" data-hash="{{.Hash}}" data-tier="{{.Tier}}" data-last="{{unixMilli .LastActivity}}">
   <a class="card" href="/p/{{.Slug}}">
     <span class="tile">{{icon .Icon}}</span>
     <h3 class="card-title"><span class="card-name">{{.Name}}</span>{{if .Auto}} <span class="tag">unsorted</span>{{end}}</h3>
@@ -13,7 +13,7 @@
     {{if loud .HeadlineLevel}}<span class="card-sum loud lv-{{.HeadlineLevel}}">{{icon (levelIcon .HeadlineLevel)}}<span><span class="sr">{{levelWord .HeadlineLevel}}: </span>{{.Headline}}</span></span>
     {{else}}<span class="card-sum">{{.Summary}}</span>{{end}}
     {{with .Signals}}<span class="chips">{{range signals . 5}}{{template "chip" .}}{{end}}{{with moreThan (len .) 5}}<span class="chip more" title="More on the project page">+{{.}}</span>{{end}}</span>{{end}}
-    <span class="card-foot">{{sparkline .Activity}}<span class="when">{{if .ActivityFromNotes}}{{if .LastActivity.IsZero}}No repo or notes yet{{else}}Notes updated {{ago .LastActivity}}{{end}}{{else if .LastActivity.IsZero}}No commits seen{{else}}Last commit {{ago .LastActivity}}{{end}}</span></span>
+    {{$counted := and (not .ActivityFromNotes) (not .LastActivity.IsZero) .Activity}}<span class="card-foot">{{if $counted}}{{sparkDecor .Activity}}{{else}}{{sparkline .Activity}}{{end}}<span class="when">{{if .ActivityFromNotes}}{{if .LastActivity.IsZero}}No repo or notes yet{{else}}Notes updated {{ago .LastActivity}}{{end}}{{else if .LastActivity.IsZero}}No commits seen{{else if .Activity}}<span class="nw">{{plural (commitTotal .Activity) "commit" "commits"}} in 12 weeks,</span> <span class="nw">last {{ago .LastActivity}}</span>{{else}}Last commit {{ago .LastActivity}}{{end}}</span></span>
   </a>
 </article>
 {{end}}
@@ -28,7 +28,7 @@
 {{end}}
 
 {{define "idea"}}{{$it := .It}}{{$i := $it.I}}
-<article class="idea k-{{ident $i.Kind}}" id="idea-{{ident $i.ID}}" data-kind="{{$i.Kind}}" data-size="{{$i.Size}}" data-project="{{$i.Project}}" tabindex="-1">
+<article class="idea k-{{ident $i.Kind}}" id="idea-{{ident $i.ID}}" data-kind="{{$i.Kind}}" data-size="{{$i.Size}}" data-filed="{{$it.Filed}}" data-project="{{$i.Project}}" tabindex="-1">
   {{if or $i.Kind $i.Size}}<div class="idea-head">
     {{with $i.Kind}}<span class="kind">{{icon (kindIcon .)}}{{kindLabel .}}</span>{{end}}
     {{with $i.Size}}<span class="size" title="Size: {{sizeLabel .}}">{{sizeLabel .}}</span>{{end}}

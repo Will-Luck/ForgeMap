@@ -4,14 +4,20 @@
 # check works whatever network a CI job runs in. Prints the logs on failure
 # and always removes the container.
 #
+# It runs the image locked down, as the install guide asks: a read-only root
+# file system, no Linux capabilities, no new privileges. ForgeMap writes only
+# to /data; the demo also writes its fake world under /tmp, hence the tmpfs.
+# A write anywhere else fails this check.
+#
 # Usage: scripts/demo-smoke.sh [image] [container name]
 set -euo pipefail
 
-image="${1:-waymark:ci}"
-name="${2:-waymark-smoke-$$}"
+image="${1:-forgemap:ci}"
+name="${2:-forgemap-smoke-$$}"
 
 trap 'docker rm -f "$name" > /dev/null 2>&1 || true' EXIT
-docker run -d --name "$name" "$image" -demo > /dev/null
+docker run -d --name "$name" --read-only --tmpfs /tmp --cap-drop ALL \
+  --security-opt no-new-privileges "$image" -demo > /dev/null
 
 for i in $(seq 1 30); do
   if docker exec "$name" wget -q -O /dev/null http://127.0.0.1:8080/ 2> /dev/null &&

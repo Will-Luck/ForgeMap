@@ -1,14 +1,16 @@
 # Configuration
 
-Waymark reads one YAML file. With no file it runs from environment variables
-alone (the [quick start](#environment-only-quick-start)). Everything here is
+ForgeMap reads one YAML file. With no file it runs from environment variables
+alone (the [quick start](#environment-only-quick-start)), and with neither it
+is [set up in the browser](#set-up-in-the-browser). Everything here is
 optional except at least one forge.
 
 - [Where the config comes from](#where-the-config-comes-from)
 - [Environment variables](#environment-variables)
 - [Command-line flags](#command-line-flags)
+- [Set up in the browser](#set-up-in-the-browser)
 - [The config file](#the-config-file): [`site`](#site),
-  [`include_private`](#include_private), [`forges`](#forges),
+  [`include_private`](#include_private), [`refresh`](#refresh), [`forges`](#forges),
   [`projects`](#projects), [`ideas`](#ideas), [`needs_you`](#needs_you),
   [`notes`](#notes), [`plans`](#plans), [`docker`](#docker),
   [`probes`](#probes), [`listen` and `data_dir`](#listen-and-data_dir)
@@ -17,19 +19,23 @@ optional except at least one forge.
 - [Notes folders](#notes-folders)
 - [Plans and changelogs](#plans-and-changelogs)
 - [The Docker feed](#the-docker-feed)
+- [The activity feed](#the-activity-feed)
 
-A complete example is [`waymark.example.yml`](../waymark.example.yml).
+A complete example is [`forgemap.example.yml`](../forgemap.example.yml).
 
 ## Where the config comes from
 
-1. The file named by `WAYMARK_CONFIG`, if it is set.
-2. Otherwise `/config/waymark.yml`, if it exists. In Docker, bind-mount a
+1. The file named by `FORGEMAP_CONFIG`, if it is set.
+2. Otherwise `/config/forgemap.yml`, if it exists. In Docker, bind-mount a
    directory there read-only: `-v "$PWD/config:/config:ro"`.
-3. Otherwise no file: the [environment-only quick
+3. Otherwise, when `GITEA_URL`, `GITEA_TOKEN`, `GITHUB_TOKEN` or
+   `GITHUB_OWNERS` is set, the [environment-only quick
    start](#environment-only-quick-start).
+4. Otherwise [settings made in the browser](#set-up-in-the-browser), kept in
+   `data_dir`.
 
-An unknown key is an error that names the key, and Waymark does not start
-until the config is valid. Errors never repeat a token.
+A config file or the quick start does not start until the config is valid.
+An unknown key is an error that names the key. Errors never repeat a token.
 
 ### `${VAR}` expansion
 
@@ -50,12 +56,14 @@ an empty string.
 
 | Variable | Used for | Default |
 |---|---|---|
-| `WAYMARK_CONFIG` | Path of the config file | `/config/waymark.yml` when it exists |
-| `WAYMARK_LISTEN` | Address to serve on, when the file has no `listen` | `:8080` |
+| `FORGEMAP_CONFIG` | Path of the config file | `/config/forgemap.yml` when it exists |
+| `FORGEMAP_LISTEN` | Address to serve on, when the file has no `listen` | `:8080` |
 | `DATA_DIR` | State directory, when the file has no `data_dir` | `/data` |
-| `WAYMARK_TITLE` | Page title, when the file has no `site.title` | `Waymark` |
+| `FORGEMAP_TITLE` | Page title, when the file has no `site.title` | `ForgeMap` |
 | `TZ` | Time zone, when the file has no `site.timezone` | `UTC` |
-| `WAYMARK_INCLUDE_PRIVATE` | `true` or `false`: show private repos, when the file has no `include_private` (the only way in the quick start) | `false` |
+| `FORGEMAP_INCLUDE_PRIVATE` | `true` or `false`: show private repos, when the file has no `include_private` (the only way in the quick start) | `false` |
+| `FORGEMAP_FORKS` | Quick start only: `true` or `false`, track forks too (a file sets `forges[].forks` per forge) | `false` |
+| `FORGEMAP_REFRESH` | `true` or `false`: offer Refresh now and `POST /api/refresh`, when the file has no `refresh` | `true` |
 | `GITEA_URL` | Quick start only: your Gitea or Forgejo address | none |
 | `GITEA_TOKEN` | Quick start only: its read-only token | none |
 | `GITEA_OWNERS` | Quick start only: comma-separated users and orgs to track | the token user's own repos only |
@@ -67,7 +75,7 @@ file, name them yourself: `token: ${GITHUB_TOKEN}`.
 
 ### Environment-only quick start
 
-With no config file, Waymark makes up to two forges from the environment:
+With no config file, ForgeMap makes up to two forges from the environment:
 
 - `GITEA_URL` or `GITEA_TOKEN` set: a forge with id `gitea`, type `gitea`,
   owners from `GITEA_OWNERS`, heatmap on.
@@ -75,24 +83,110 @@ With no config file, Waymark makes up to two forges from the environment:
   `github`, owners from `GITHUB_OWNERS`, heatmap on.
 
 Every other setting takes its default: no projects file, no ideas file, no
-notes, no Docker, homepages probed, private repos left out
-(`WAYMARK_INCLUDE_PRIVATE=true` shows them). Each tracked repo becomes a
-project; a repo with the same name on both forges is one project, with Gitea
-first.
+notes, no Docker, homepages probed, private repos and forks left out
+(`FORGEMAP_INCLUDE_PRIVATE=true` and `FORGEMAP_FORKS=true` show them). Each
+tracked repo becomes a project; a repo with the same name on both forges is
+one project, with Gitea first.
 
 ## Command-line flags
 
 | Flag | What it does |
 |---|---|
-| `-listen <addr>` | Serve on this address; wins over `listen` and `WAYMARK_LISTEN` |
+| `-listen <addr>` | Serve on this address; wins over `listen` and `FORGEMAP_LISTEN` |
 | `-demo` | Serve an invented team from a built-in fake forge: no config, no network, every page says it is demo data |
 | `-dump <path>` | Collect once, write the assembled site JSON to the path and exit |
-| `-fixture <path>` | Serve a saved site JSON file (no sources are read) |
-| `-version` | Print `waymark <version>` and exit |
+| `-fixture <path>` | Serve a saved site JSON file (no sources are read); an edit to the file is served within a second and sent to open pages as a live update |
+| `-version` | Print `forgemap <version>` and exit |
+| `-reset-password` | Set up in the browser only: a new random password for the account; every browser is signed out; prints the password and a one-time sign-in link (it works once, for 15 minutes) and exits |
 
-At start the log says which config it read (`config: /config/waymark.yml`,
-or `config: environment only`), and warns of a token whose `${VAR}` is
+At start the log says which config it read (`config: /config/forgemap.yml`,
+`config: environment only`, or `config: settings in /data (set up in the
+browser)`), and warns of a token whose `${VAR}` is
 empty or not set; it never prints a value.
+
+## Set up in the browser
+
+With no config file and none of the four quick-start forge variables, a new
+install is set up in the browser instead.
+
+- **When it applies:** the data dir is new. None of `settings.json`, or of
+  `state.json`, `projects.cache.yaml` and `ideas.cache.json`, or a file
+  whose name starts with one of those three (a left-over copy), is in it. A
+  data dir already in use with no `settings.json` (a config mount gone
+  missing, say) stops the start as before, and the log adds how to set up
+  in the browser instead: start with an empty data volume.
+- **Which data dir:** `DATA_DIR`, else `/data`. A `data_dir` set inside a
+  config file is not seen when that file is missing, so the check looks at
+  `DATA_DIR` or `/data`. The user ForgeMap runs as (uid 1000 in the image)
+  must be able to write it: until setup is finished, a data dir it cannot
+  write stops the start, and the log says why. Once set up, the page is
+  still served from one it cannot write, and the log warns that no change
+  is saved.
+- **The environment:** `FORGEMAP_LISTEN` and `DATA_DIR` still apply. `TZ` and
+  `FORGEMAP_TITLE` only fill in the setup form. `FORGEMAP_INCLUDE_PRIVATE`,
+  `FORGEMAP_REFRESH` and `FORGEMAP_FORKS` are not read; the log warns once
+  for each one that is set.
+- **The setup window:** a start that finds no account keeps setup open
+  for 5 minutes, and the log says until when (`setup: open the page and
+  make your account within 5 minutes, by 14:05:09. A restart opens setup
+  again.`). During those minutes anyone who can open the page, or a web
+  page open in a browser on your network, can make the account: start
+  ForgeMap when you are ready to set it up, and do not expose a new
+  install to the internet before the account exists. Once the window has
+  closed with no account, the page says so; restart ForgeMap to open it
+  again. If a new install shows anything but setup before you have made
+  an account (it asks you to sign in, or shows a page), someone else made
+  it first: stop ForgeMap, empty the data volume and start again. `-reset-password` alone does not undo it, because it keeps
+  the feed key and the saved settings: after it, press **Make a new key** in
+  Settings and check each forge and who can see the page.
+- **Settings** changes every key on this page but `listen` and `data_dir`,
+  and applies it live, without a restart. A forge's id is generated, never
+  edited, and is its name in a projects file.
+- **Who can see the page:** with "Only me, after signing in" in setup, or
+  "Ask for sign-in to see the page" in Settings (on by default), the pages,
+  the JSON API and the feed need the account. Settings always does.
+- **The feed key:** `fm_` and 32 characters, for feed readers and scripts.
+  It is accepted as `?key=`, as `Authorization: Bearer <key>`, or as Basic
+  auth with any user name and the key as the password, on `/feed.atom`,
+  `/api/*.json` and `POST /api/refresh` only, so a push webhook keeps
+  working. **Make a new key** in Settings stops the old one at once.
+- **`settings.json`** is mode 0600. It holds the forge tokens **in plain
+  text**, the password hash (PBKDF2-SHA256, 600,000 rounds), the two signing
+  secrets and the feed key (and, after `-reset-password`, the SHA-256 of its
+  one-time link, never the link, until the link is used or replaced or the
+  password is changed; the link stops working after 15 minutes): treat a
+  copy of the volume as a secret. Never edit it by hand; a file that cannot be read stops the
+  start, and it is never moved aside.
+- **A lost password:** `forgemap -reset-password` prints a new one; in
+  Docker, `docker exec forgemap forgemap -reset-password`. Run it as the
+  user ForgeMap runs as. Every browser is signed out, and the running server
+  takes it at the next sign-in. The feed key and the settings stay as they
+  were, and it says so. It also prints a one-time link,
+  `/signin?once=<token>`, to add to your ForgeMap address: when others'
+  wrong guesses have the sign-in page saying there were too many tries, it
+  lets one sign-in skip the wait. It works once, for 15 minutes, and still
+  needs the new password.
+- **Behind a reverse proxy:** the proxy must pass the browser's `Host` (or
+  set `X-Forwarded-Host`) and set `X-Forwarded-Proto`, or every form is
+  refused as sent from another site.
+- **Plain HTTP** sends the password across the network in clear: use HTTPS,
+  or keep the page on your LAN or VPN.
+- **One address, several apps:** cookies are shared across the ports of one
+  host name, so give ForgeMap a host name of its own.
+- **Forge requests** ignore `HTTP_PROXY` and `HTTPS_PROXY` and follow no
+  redirect. Each forge is tested with its token before it is saved.
+- **A forge with a self-signed certificate** (or one made for another
+  name, or out of date): **Connect** shows the certificate, with who it
+  was issued to and by, its last valid day and its fingerprint. Tick
+  **Trust this certificate for this forge** and ForgeMap accepts that
+  certificate, and no other, from that address. The forge's page in
+  Settings shows the trusted fingerprint and **Stop trusting**; when the
+  forge's certificate changes, the overview says so and the forge's page
+  shows the new one to check and trust. Replacing the token of a forge
+  that has moved to a certificate the normal check accepts also stops
+  trusting the old one. GitHub is always checked the normal way. A config-file install has no such setting, nor has GitHub:
+  mount the CA and set `SSL_CERT_FILE`, as the install guide's
+  "Self-signed certificates" section shows.
 
 ## The config file
 
@@ -104,7 +198,7 @@ off.
 
 | Key | Type | Default | What it does |
 |---|---|---|---|
-| `site.title` | string | `Waymark` (or `WAYMARK_TITLE`) | The page title, header and footer |
+| `site.title` | string | `ForgeMap` (or `FORGEMAP_TITLE`) | The page title, header and footer |
 | `site.timezone` | string | `$TZ`, else `UTC` | An IANA zone such as `Europe/Paris`. Every date and time on the page is written in it, and "today" and the week boundaries follow it |
 | `site.you` | list of strings | `[]` | Your names as notes write them. Only the `claude-memory` notes type reads it; with no names, nothing in those notes waits on you |
 
@@ -119,12 +213,15 @@ site:
 
 | Key | Type | Default | What it does |
 |---|---|---|---|
-| `include_private` | bool | `false` (or `WAYMARK_INCLUDE_PRIVATE`) | `false` drops private repos everywhere: projects, needs-you, ideas, events, the ship log and the map. `true` shows them like any other repo |
+| `include_private` | bool | `false` (or `FORGEMAP_INCLUDE_PRIVATE`) | `false` drops private repos everywhere: projects, needs-you, ideas, events, the ship log and the map. `true` shows them like any other repo |
 
-The page has no login, so private repos are off unless you turn them on.
-With `true`, everything the [privacy list](https://github.com/Will-Luck/waymark/wiki/Privacy-and-Security#there-is-no-login)
+A config file or quick-start install has no sign-in, so private repos are
+off unless you turn them on. With `true`, everything the [privacy list](https://github.com/Will-Luck/forgemap/wiki/Privacy-and-Security#who-can-see-the-page)
 names shows for private repos too (names, issue titles, commit messages),
 to anyone who can reach the page: put a login in front of it first.
+
+Set up in the browser, **Show private repos** works only while the page asks
+for sign-in, and turning sign-in off turns it off.
 
 With `false`, a repo shows only once it is known to be public:
 
@@ -146,6 +243,30 @@ With `false`, a repo shows only once it is known to be public:
   projects file says about it.
 - The heatmap counts all of the token user's activity, private repos
   included: a number per day, with no repo names.
+- When every repo a forge lists is private, its source row says "Private
+  repos are hidden (include_private is off)". That tells anyone who can see
+  the page that private repos exist, with no names and no count (the log
+  has the count).
+
+### refresh
+
+| Key | Type | Default | What it does |
+|---|---|---|---|
+| `refresh` | bool | `true` (or `FORGEMAP_REFRESH`) | `true` offers **Refresh now** in the command palette and answers `POST /api/refresh` (a forge's push webhook can call it). `false` takes Refresh now out of the palette, and `POST /api/refresh` answers 404 |
+
+A refresh is an early run of the usual reads, at most one a minute: every
+forge is listed again and the projects and ideas files are read again, and a
+repo's detail is read only where its list entry changed or its last read
+failed, on every forge type. Mirrors read in the last 5 minutes, and the
+heatmap, the filed-idea search, the F-Droid indexes and the probes read in the
+last 2 minutes, wait for their own turn; a forge whose rate limit is spent is
+asked nothing. So on a world where nothing changed a refresh costs one repo
+list per forge.
+
+`POST /api/refresh` answers 202 with `{"ok": true, "queued": true}`, or, when
+one was queued less than a minute ago, 200 with `{"ok": true, "queued": false,
+"last_at": "...", "next_at": "..."}` (RFC 3339 times): the last was queued at
+`last_at`, and the next can start at `next_at`.
 
 ### forges
 
@@ -157,10 +278,11 @@ release).
 |---|---|---|---|
 | `forges[].id` | string | required | Your name for the forge. The projects file uses it as a repo key (`- gitea: acme/tool`), and it names the forge's source status. Unique, and not one of `registry`, `heatmap`, `ideas`, `docker`, `probes`, `notes`, `fdroid` |
 | `forges[].type` | string | required | `gitea`, `forgejo` (the same API) or `github`. The page names the forge by it (Gitea, Forgejo, GitHub), or Codeberg for one on `codeberg.org` |
-| `forges[].url` | string | required for `gitea`; `https://api.github.com` for `github` | Gitea or Forgejo: the site address, such as `https://git.example.com` (Waymark adds `/api/v1`, so leave it off). GitHub: the API root. An `http://` or `https://` address with no user name or password (the token goes in `token`). GitHub Enterprise Server is not supported yet: Waymark sends GraphQL to `<url>/graphql`, which it serves elsewhere |
-| `forges[].token` | string | none | A read-only token (see [Tokens and scopes](https://github.com/Will-Luck/waymark/wiki/Installation#tokens-and-scopes)). **Gitea and Forgejo** need one: without it their API answers 401 and the forge's source shows as failing. **GitHub** runs without one but lists nothing: only repos the projects file names are read, and only lightly (the repo, its open issues and its latest release; 60 requests an hour). Its source stays OK, and says why when that leaves `owners` unlisted or nothing to read. A `${VAR}` here that is empty or not set is warned of at start |
-| `forges[].owners` | list of strings | `[]` | The users and orgs whose repos are tracked; each repo becomes a project unless the projects file claims or hides it. Empty means the token user's own repos only, on every forge type: not repos the user collaborates on, and not its organisations' repos. List an org or another user to track theirs (and list yourself too, to keep your own). An owner with no repos the token can see is logged once. A repo the projects file names is read even when its owner is not listed |
+| `forges[].url` | string | required for `gitea`; `https://api.github.com` for `github` | Gitea or Forgejo: the site address, such as `https://git.example.com` (ForgeMap adds `/api/v1`, so leave it off). GitHub: the API root. An `http://` or `https://` address with no user name or password (the token goes in `token`). GitHub Enterprise Server is not supported yet: ForgeMap sends GraphQL to `<url>/graphql`, which it serves elsewhere |
+| `forges[].token` | string | none | A read-only token (see [Tokens and scopes](https://github.com/Will-Luck/forgemap/wiki/Installation#tokens-and-scopes)). **Gitea and Forgejo** need one: without it their API answers 401 and the forge's source shows as failing. **GitHub** runs without one but lists nothing: only repos the projects file names are read, and only lightly (the repo, its open issues when it has some, and its latest release; 60 requests an hour). Its source stays OK, and says why when that leaves `owners` unlisted or nothing to read. A `${VAR}` here that is empty or not set is warned of at start |
+| `forges[].owners` | list of strings | `[]` | The users and orgs whose repos are tracked; each repo becomes a project unless the projects file claims or hides it. Empty means the token user's own repos only, on every forge type: not repos the user collaborates on, and not its organisations' repos. List an org or another user to track theirs (and list yourself too, to keep your own); Gitea and Forgejo read each owner's own list, as GitHub does, so this is any user or org, not only one the token user belongs to (an org is read from its own list when the token has the read:organization scope, and from the same list as a user when it does not). An owner with no repos the token can see, or no such owner, is logged once. A Gitea or Forgejo list longer than 40 pages (2,000 repos) stops there, and the forge's status says so. A repo the projects file names is read even when its owner is not listed |
 | `forges[].heatmap` | bool | `true` | Add the token user's contribution days to the ship log's year of commits: Gitea's heatmap, or GitHub's contribution calendar (needs a token). It counts all of that user's activity, private repos included, whatever `include_private` says: a number per day, no repo names. Turn it off for a forge that mirrors another, or mirrored commits count twice |
+| `forges[].forks` | bool | `false` | Track repos that are forks. Off, a fork is tracked only when the projects file names it in a project's `repos:`, so forks made to send one change do not fill the page |
 
 ```yaml
 forges:
@@ -176,22 +298,54 @@ forges:
     heatmap: false
 ```
 
-What a forge reads: the repo list every minute. For each primary repo: its
-tags, releases, open issues and PRs (with assignees and review requests),
-commits from the last 84 days and Actions runs, again when the repo changes
-and at least every 30 minutes; its `CHANGELOG.md` and plan files when the
-repo changes and at least every 6 hours. A mirror gets three reads every 30
-minutes: the repo, its open issues and its latest release (and, when a rate
-limit stopped those reads, again within a minute of the limit's end).
+What a forge reads:
 
-A refresh (Refresh in the page's command palette, or `POST /api/refresh`) lists every forge
-again; a Gitea or Forgejo forge then reads every primary's detail again,
-and a GitHub forge only the repos whose list entry changed or whose last
-read failed. A forge that answers that its rate limit is spent (GitHub) is
-asked nothing until the reset it names, at most an hour. Its status, and
-the row of any other read the limit stops (the heatmap, the filed-idea
-search, a projects or ideas file in a repo on it), names the time after
-which it will be asked again.
+- **The repo list**, every minute. Each forge is listed and read on a minute
+  of its own, a few seconds apart from the others, so a forge that hangs
+  holds up only itself.
+- **A primary repo's detail**: its tags, releases, open issues and PRs (with
+  assignees and review requests), commits from the last 84 days and Actions
+  runs, when the repo changes and at least every 30 minutes. With a GitHub
+  token, a repo whose only news is a run in progress has only its runs read
+  each minute, and its whole detail once the run ends.
+- **A primary repo's files**: its `CHANGELOG.md` and plan files, when the
+  repo changes and at least every 6 hours.
+- **A mirror**: two or three reads every 30 minutes: the repo, its open
+  issues (only when it has some) and its latest release.
+
+An unchanged repo comes due on a minute of its own in the last quarter of
+each span, so a forge is never asked for every repo at once.
+
+When a read fails: one that fails fast (HTTP 502, 503 or 504, or a refused
+or dropped connection) is tried twice more, after about 1 and 3 seconds.
+When a read times out, or still fails fast after those tries, the reads
+already under way end (at most four at once) and the forge's other repos
+wait for the next pass with their last good data. Its status says it is
+not answering and how many repos were not read. When the forge answers
+its other repos, the status instead counts the repos that could not be
+read, says how many more the stop left unread, and names the first
+failure; it keeps doing so while that repo fails on its own. A repo whose
+last read failed is read after the others, so one failing repo does not
+hold them up. A mirror read that a rate limit stopped is tried again
+within a minute of the limit's end; one that failed for a reason that
+passes (a timeout, a dropped connection or a 5xx answer) after 1, 2, 4 and
+up to 30 minutes, but not after a 4xx answer such as a repo that is not
+there.
+
+Without a token every GitHub read counts against the 60 an hour GitHub
+allows your address, even an unchanged (304) answer, and other programs on
+that address share them. When an answer says none are left, ForgeMap asks
+nothing more until the reset it names. A fine-grained token with read-only
+access to public repositories makes unchanged answers free and allows 5,000
+an hour; with a token the forge also lists its `owners` (the token user's
+own repos when `owners` is empty).
+
+A [refresh](#refresh) lists every forge again and reads a repo's detail only
+where its list entry changed or its last read failed. A forge that answers
+that its rate limit is spent (GitHub) is asked nothing until the reset it
+names, at most an hour. Its status, and the row of any other read the limit
+stops (the heatmap, the filed-idea search, a projects or ideas file in a
+repo on it), names the time after which it will be asked again.
 
 ### projects
 
@@ -210,7 +364,7 @@ in a forge repo. Set `projects.file`, or all three of `projects.forge`,
 projects:
   file: /config/projects.yaml
 # or
-projects: {forge: gitea, repo: acme/waymark-config, path: projects.yaml}
+projects: {forge: gitea, repo: acme/forgemap-config, path: projects.yaml}
 ```
 
 The file is read again when it changes (a local file's modification time, or
@@ -228,24 +382,24 @@ good copy and says why in the source status.
 | `ideas.forge` | string | none | Or read the ideas file through this forge id |
 | `ideas.repo` | string | none | `owner/name` of the repo holding it |
 | `ideas.path` | string | none | Its path in that repo |
-| `ideas.marker` | string | `waymark-idea:` | The line "File as issue" puts last in a new issue's body, followed by the idea's id; Waymark searches for it to find issues already filed. It needs a letter or a digit |
+| `ideas.marker` | string | `forgemap-idea:` | The line "File as issue" puts last in a new issue's body, followed by the idea's id; ForgeMap searches for it to find issues already filed. It needs a letter or a digit |
 
 ```yaml
 ideas:
   labels: [idea]
   file: /config/ideas.json
-  marker: "waymark-idea:"
+  marker: "forgemap-idea:"
 ```
 
 Quote the marker: an unquoted value that ends in `:` is read as a mapping
 and the file fails to load. Label ideas come from each repo's 10 newest open
-issues, the ones Waymark already reads. Finding filed ideas on GitHub needs a
+issues, the ones ForgeMap already reads. Finding filed ideas on GitHub needs a
 token (it uses the issue search).
 
 ### needs_you
 
 The forge rules for the **Needs you** list. The other rules (Deploy, Fix,
-stale PRs, Confirm) are always on; see [Needs you](https://github.com/Will-Luck/waymark/wiki/Features#needs-you).
+stale PRs, Confirm) are always on; see [Needs you](https://github.com/Will-Luck/forgemap/wiki/Features#needs-you).
 
 | Key | Type | Default | What it does |
 |---|---|---|---|
@@ -318,16 +472,18 @@ projects file's `urls:` probes are yours and are requested as given.
 
 A probe is one GET every 2 minutes with a 5-second limit. A 2xx or 3xx answer
 (redirects are not followed), 401 or 403 counts as up. A probe counts as down
-after 2 failed checks in a row; one failed check shows as "Failed once,
-checking again" and raises nothing. Uptime and the 24-hour bar count every
-check.
+after 2 failed checks in a row, at most 5 minutes apart; after a longer gap
+(a long restart, a sleeping host) the next failed check counts as the first
+again, unless the probe had already counted as down. One failed check shows
+as "Failed once, checking again" and raises nothing. Uptime and the 24-hour
+bar count every check.
 
 ### listen and data_dir
 
 | Key | Type | Default | What it does |
 |---|---|---|---|
-| `listen` | string | `WAYMARK_LISTEN`, else `:8080` | The address to serve on. `-listen` wins |
-| `data_dir` | string | `DATA_DIR`, else `/data` | Where Waymark keeps `state.json` (events for 90 days, probe history, each project's last state) and the last good projects and ideas files. The image declares it a volume |
+| `listen` | string | `FORGEMAP_LISTEN`, else `:8080` | The address to serve on. `-listen` wins |
+| `data_dir` | string | `DATA_DIR`, else `/data` | Where ForgeMap keeps `state.json` (mode 0600: events for 90 days, probe history, each project's last state) and the last good projects and ideas files. Set up in the browser, also `settings.json` (see [Set up in the browser](#set-up-in-the-browser)). The image declares it a volume |
 
 ## The projects file
 
@@ -341,7 +497,7 @@ owner: acme
 categories:
   - {key: services, label: Services, icon: server, hue: 150}
   - {key: apps, label: Apps, icon: layout-dashboard, hue: 210}
-hide_repos: [waymark-config, scratch]
+hide_repos: [forgemap-config, scratch]
 projects:
   - slug: beacon
     name: Beacon
@@ -387,11 +543,11 @@ projects:
 | `projects[].runs_on` | string | Where it runs, in words, for "Where it runs" |
 | `projects[].repos` | list | One-key entries, `- <forge id>: owner/name`. The first is the primary (tags, releases, CI, changelog, plans); a repo on another forge is a mirror; more repos on the primary's forge are read in full too |
 | `projects[].containers` | list of strings | Container names for this project, instead of matching by slug or label. A name Docker does not know shows as missing |
-| `projects[].fdroid.index` | string | URL of an F-Droid repo's `index-v1.json` |
+| `projects[].fdroid.index` | string | URL of an F-Droid repo's `index-v1.json`, the main repo's included (`https://f-droid.org/repo/index-v1.json`, about 75 MB). Read every 10 minutes and streamed, keeping only the packages the projects file names (at most 256 MiB is read). A read has 2 minutes, a server that has not begun to answer after 20 seconds fails, and an unchanged index (a 304 answer) is not downloaded again. A package named later is read as soon as the projects file is read again |
 | `projects[].fdroid.package` | string | The app's package id in that index. Its published version is the running version for the Deploy rule |
 | `projects[].urls[].label` | string | The link's name, such as `Live` |
 | `projects[].urls[].url` | string | The link |
-| `projects[].urls[].probe` | string | A URL to probe every 2 minutes. A probe down for 2 checks in a row raises **Fix** and an up one makes the project Live. Leave it out for a link only |
+| `projects[].urls[].probe` | string | A URL to probe every 2 minutes. A probe down for 2 checks in a row (at most 5 minutes apart) raises **Fix** and an up one makes the project Live. Leave it out for a link only |
 | `projects[].notes` | list of strings | Note file names for this project (both notes types); a listed file that is missing is reported |
 | `projects[].relations[].to` | string | Another project's slug |
 | `projects[].relations[].kind` | string | `depends-on`, `client-of`, `fork-of`, `deploys`, `sibling`, `monitors`, `supersedes`, or any word (shown with dashes as spaces). Shown on both projects and drawn on the map |
@@ -496,7 +652,7 @@ front matter (`name`, `description`, `modified`). Most people want
 
 ## Plans and changelogs
 
-**Plans.** In each primary repo, Waymark looks in the plan folders for
+**Plans.** In each primary repo, ForgeMap looks in the plan folders for
 Markdown files whose names start with a date, `2026-10-28-new-editor.md`, or
 dated folders holding a `plan.md`. A plan shows under "Next up" with its
 first heading and its checkboxes counted ("3 of 7") while it is partly done
@@ -508,21 +664,21 @@ released version and date.
 
 ## The Docker feed
 
-The feed lets Waymark see containers without the Docker socket.
+The feed lets ForgeMap see containers without the Docker socket.
 [`scripts/docker-feed.sh`](../scripts/docker-feed.sh) writes
 `docker ps -a --format '{{json .}}'` to `$FEED_DIR/docker.json` (default
-`/var/lib/waymark-feed`) by write-and-rename. Run it from the host's cron
+`/var/lib/forgemap-feed`) by write-and-rename. Run it from the host's cron
 every minute:
 
 ```cron
-* * * * * FEED_DIR=/var/lib/waymark-feed /usr/local/bin/docker-feed.sh
+* * * * * FEED_DIR=/var/lib/forgemap-feed /usr/local/bin/docker-feed.sh
 ```
 
 Mount the directory, never the single file (a rename detaches a
 single-file bind mount), and point `docker.feed` at the file inside it:
 
 ```bash
-docker run ... -v /var/lib/waymark-feed:/feed:ro ...
+docker run ... -v /var/lib/forgemap-feed:/feed:ro ...
 ```
 
 ```yaml
@@ -530,9 +686,31 @@ docker:
   feed: /feed/docker.json
 ```
 
-With `docker.host` instead, Waymark asks the Engine API directly. A socket
+With `docker.host` instead, ForgeMap asks the Engine API directly. A socket
 mount gives the container control of Docker even when mounted `:ro`, so
 prefer a socket proxy that allows only container listing (for example
 `CONTAINERS=1` on a docker-socket-proxy). Mounting the socket itself also
 needs its group: `--group-add $(stat -c %g /var/run/docker.sock)`, because
-Waymark runs as uid 1000.
+ForgeMap runs as uid 1000.
+
+## The activity feed
+
+`/feed.atom` is an Atom feed of the changes the overview shows: the newest
+100 of the last 14 days, newest first. Each entry is one change (a release,
+a deploy, a CI run, a change of state, new commits and the rest), titled in
+the page's words and linked to its project's page. It shows nothing the
+page does not: no private repo the page leaves out, and no note changes
+without a notes source. Every page names it in its head, so a feed reader
+finds it from the site's address.
+
+| Query | Keeps |
+|---|---|
+| `?kind=release,ci` | Only these kinds, from `release`, `deploy`, `container`, `ci`, `commits`, `issues`, `probe`, `note` and `tier` |
+| `?project=<slug>` | Only one project's changes |
+
+The two can be used together. An unknown kind or project gives an empty
+feed. Links use the address the feed was read at, so a proxy in front must
+pass the original `Host` header (for nginx, `proxy_set_header Host $host`;
+its default sends the upstream's address and every link would point
+there). A proxy that ends TLS should also send `X-Forwarded-Proto: https`
+so the links start with `https`.

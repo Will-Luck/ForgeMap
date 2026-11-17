@@ -15,7 +15,7 @@ func env(m map[string]string) func(string) string {
 
 func writeCfg(t *testing.T, body string) string {
 	t.Helper()
-	p := filepath.Join(t.TempDir(), "waymark.yml")
+	p := filepath.Join(t.TempDir(), "forgemap.yml")
 	if err := os.WriteFile(p, []byte(body), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -45,7 +45,7 @@ func TestLoadExampleFile(t *testing.T) {
 		"flow owners":      {"owners: [acme]             #", "owners: [acme, otherco]    #"},
 		"block owners":     {"    owners: [acme]\n", "    owners:\n      - acme\n      - otherco # a second team\n"},
 		"commented owners": {"  # or: {forge:", "  # owners: [otherco]\n  # or: {forge:"},
-		"title":            {"title: Waymark", "title: Team status"},
+		"title":            {"title: ForgeMap", "title: Team status"},
 		"commented title":  {"site:\n", "site:\n  # title: Team status\n"},
 		"host":             {"https://git.example.com", "https://git.internal.lan"},
 		"address":          {"https://git.example.com", "http://10.1.2.3:3000"},
@@ -62,7 +62,7 @@ func TestLoadExampleFile(t *testing.T) {
 
 // exampleProblems says where an example config names more than
 // placeholders: hosts other than reserved example names (or GitHub's API),
-// IP addresses, owners other than acme and a title other than Waymark. It
+// IP addresses, owners other than acme and a title other than ForgeMap. It
 // reads the parsed values and the text itself, comments included, in flow
 // ([a, b]) and block (- a) style.
 func exampleProblems(t *testing.T, src string) []string {
@@ -72,7 +72,7 @@ func exampleProblems(t *testing.T, src string) []string {
 	if err != nil {
 		return []string{err.Error()}
 	}
-	if c.Site.Title != "Waymark" {
+	if c.Site.Title != "ForgeMap" {
 		out = append(out, "title "+c.Site.Title)
 	}
 	for _, f := range c.Forges {
@@ -100,7 +100,7 @@ func exampleProblems(t *testing.T, src string) []string {
 	lines := strings.Split(src, "\n")
 	for i, l := range lines {
 		l = uncomment(l)
-		if v, ok := strings.CutPrefix(l, "title:"); ok && value(v) != "Waymark" {
+		if v, ok := strings.CutPrefix(l, "title:"); ok && value(v) != "ForgeMap" {
 			out = append(out, "title line "+value(v))
 		}
 		v, ok := strings.CutPrefix(l, "owners:")
@@ -149,7 +149,7 @@ func TestEnvQuickStart(t *testing.T) {
 
 	c, err = Load("", env(map[string]string{
 		"GITEA_URL": "https://git.example.com/", "GITEA_TOKEN": "gt", "GITEA_OWNERS": "acme",
-		"WAYMARK_TITLE": "Acme", "TZ": "Europe/Lisbon", "WAYMARK_LISTEN": ":9", "DATA_DIR": "/d",
+		"FORGEMAP_TITLE": "Acme", "TZ": "Europe/Lisbon", "FORGEMAP_LISTEN": ":9", "DATA_DIR": "/d",
 	}))
 	if err != nil {
 		t.Fatal(err)
@@ -323,10 +323,10 @@ func TestDefaults(t *testing.T) {
 	}
 	want := Config{
 		Listen: ":8080", DataDir: "/data",
-		Site:           Site{Title: "Waymark", Timezone: "UTC"},
+		Site:           Site{Title: "ForgeMap", Timezone: "UTC"},
 		IncludePrivate: false,
 		Forges:         c.Forges,
-		Ideas:          Ideas{Labels: []string{"idea", "enhancement"}, Marker: "waymark-idea:"},
+		Ideas:          Ideas{Labels: []string{"idea", "enhancement"}, Marker: "forgemap-idea:"},
 		NeedsYou:       NeedsYou{Labels: []string{"needs-you", "decision"}, Assigned: true, ReviewRequests: true},
 		Notes:          Notes{Type: "none", Markers: []string{"WAITING:", "@me"}},
 		Plans:          Plans{Dirs: []string{"docs/plans", "docs/superpowers/plans"}},
@@ -339,7 +339,7 @@ func TestDefaults(t *testing.T) {
 }
 
 // include_private is false unless set: by the file, else by
-// WAYMARK_INCLUDE_PRIVATE (the only way in env-only mode). A value that is
+// FORGEMAP_INCLUDE_PRIVATE (the only way in env-only mode). A value that is
 // not a boolean fails validation, naming the variable, and leaves it false;
 // when the file sets the key the variable is not read, so a bad value there
 // is no error.
@@ -361,14 +361,14 @@ func TestIncludePrivateDefaultAndEnv(t *testing.T) {
 		want       bool
 	}{
 		{"env-only, unset", "", quick, false},
-		{"env-only, true", "", with(quick, "WAYMARK_INCLUDE_PRIVATE", "true"), true},
-		{"env-only, false", "", with(quick, "WAYMARK_INCLUDE_PRIVATE", "false"), false},
+		{"env-only, true", "", with(quick, "FORGEMAP_INCLUDE_PRIVATE", "true"), true},
+		{"env-only, false", "", with(quick, "FORGEMAP_INCLUDE_PRIVATE", "false"), false},
 		{"file without the key", noKey, nil, false},
-		{"file without the key, env true", noKey, map[string]string{"WAYMARK_INCLUDE_PRIVATE": "true"}, true},
-		{"file false, env true", keyFalse, map[string]string{"WAYMARK_INCLUDE_PRIVATE": "true"}, false},
-		{"file true, env false", keyTrue, map[string]string{"WAYMARK_INCLUDE_PRIVATE": "false"}, true},
-		{"file false, env not a boolean", keyFalse, map[string]string{"WAYMARK_INCLUDE_PRIVATE": "yes please"}, false},
-		{"file true, env not a boolean", keyTrue, map[string]string{"WAYMARK_INCLUDE_PRIVATE": "yes please"}, true},
+		{"file without the key, env true", noKey, map[string]string{"FORGEMAP_INCLUDE_PRIVATE": "true"}, true},
+		{"file false, env true", keyFalse, map[string]string{"FORGEMAP_INCLUDE_PRIVATE": "true"}, false},
+		{"file true, env false", keyTrue, map[string]string{"FORGEMAP_INCLUDE_PRIVATE": "false"}, true},
+		{"file false, env not a boolean", keyFalse, map[string]string{"FORGEMAP_INCLUDE_PRIVATE": "yes please"}, false},
+		{"file true, env not a boolean", keyTrue, map[string]string{"FORGEMAP_INCLUDE_PRIVATE": "yes please"}, true},
 	} {
 		c, err := Load(tc.path, env(tc.env))
 		if err != nil {
@@ -381,19 +381,19 @@ func TestIncludePrivateDefaultAndEnv(t *testing.T) {
 			t.Errorf("%s: %v", tc.name, err)
 		}
 	}
-	c, err := Load("", env(with(quick, "WAYMARK_INCLUDE_PRIVATE", "yes please")))
+	c, err := Load("", env(with(quick, "FORGEMAP_INCLUDE_PRIVATE", "yes please")))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := c.Validate(); c.IncludePrivate || err == nil || !strings.Contains(err.Error(), `WAYMARK_INCLUDE_PRIVATE: "yes please" is not true or false`) {
+	if err := c.Validate(); c.IncludePrivate || err == nil || !strings.Contains(err.Error(), `FORGEMAP_INCLUDE_PRIVATE: "yes please" is not true or false`) {
 		t.Errorf("bad value: include_private %v, err %v", c.IncludePrivate, err)
 	}
 	// A file without the key reads the variable, so a bad value fails there too.
-	c, err = Load(noKey, env(map[string]string{"WAYMARK_INCLUDE_PRIVATE": "yes please"}))
+	c, err = Load(noKey, env(map[string]string{"FORGEMAP_INCLUDE_PRIVATE": "yes please"}))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := c.Validate(); c.IncludePrivate || err == nil || !strings.Contains(err.Error(), "WAYMARK_INCLUDE_PRIVATE") {
+	if err := c.Validate(); c.IncludePrivate || err == nil || !strings.Contains(err.Error(), "FORGEMAP_INCLUDE_PRIVATE") {
 		t.Errorf("file without the key, bad value: include_private %v, err %v", c.IncludePrivate, err)
 	}
 }
@@ -428,14 +428,82 @@ func TestTokenNotInError(t *testing.T) {
 func TestResolvePath(t *testing.T) {
 	yes := func(string) bool { return true }
 	no := func(string) bool { return false }
-	if got := ResolvePath(env(map[string]string{"WAYMARK_CONFIG": "/x.yml"}), no); got != "/x.yml" {
-		t.Errorf("env path = %q", got)
+	only := func(path string) func(string) bool { return func(p string) bool { return p == path } }
+	for _, c := range []struct {
+		name   string
+		env    map[string]string
+		exists func(string) bool
+		want   string
+	}{
+		{"env path", map[string]string{"FORGEMAP_CONFIG": "/x.yml"}, no, "/x.yml"},
+		{"default path", nil, yes, "/config/forgemap.yml"},
+		{"env-only", nil, no, ""},
+		// What 0.2.x left behind matters only when nothing else names a file.
+		{"env path beside the old file", map[string]string{"FORGEMAP_CONFIG": "/x.yml"}, only("/config/waymark.yml"), "/x.yml"},
+		{"default path beside the old file", nil, yes, "/config/forgemap.yml"},
+		{"default path beside WAYMARK_CONFIG", map[string]string{"WAYMARK_CONFIG": "/w.yml"}, only("/config/forgemap.yml"), "/config/forgemap.yml"},
+	} {
+		got, err := ResolvePath(env(c.env), c.exists)
+		if got != c.want || err != nil {
+			t.Errorf("%s: %q, %v; want %q", c.name, got, err, c.want)
+		}
 	}
-	if got := ResolvePath(env(nil), yes); got != "/config/waymark.yml" {
-		t.Errorf("default path = %q", got)
+
+	// A 0.2.x install that only swapped the image: its config file is
+	// /config/waymark.yml, or WAYMARK_CONFIG names one. ForgeMap reads
+	// neither, and starting on the environment alone would serve another
+	// site or fail on a quick-start variable, so it stops and says why.
+	for _, c := range []struct {
+		name   string
+		env    map[string]string
+		exists func(string) bool
+		words  []string
+	}{
+		{"old file", nil, only("/config/waymark.yml"), []string{"/config/waymark.yml", "forgemap.yml", "FORGEMAP_CONFIG"}},
+		{"old variable", map[string]string{"WAYMARK_CONFIG": "/w.yml"}, no, []string{"WAYMARK_CONFIG", "FORGEMAP_CONFIG"}},
+	} {
+		got, err := ResolvePath(env(c.env), c.exists)
+		if err == nil {
+			t.Errorf("%s: %q and no error; want an error naming %v", c.name, got, c.words)
+			continue
+		}
+		for _, w := range c.words {
+			if !strings.Contains(err.Error(), w) {
+				t.Errorf("%s: error %q does not name %s", c.name, err, w)
+			}
+		}
+		if strings.Contains(err.Error(), "/w.yml") {
+			t.Errorf("%s: error %q repeats a value", c.name, err)
+		}
 	}
-	if got := ResolvePath(env(nil), no); got != "" {
-		t.Errorf("env-only = %q", got)
+}
+
+// Each WAYMARK_ variable still set is named in a warning with the
+// FORGEMAP_ name to use instead; a value never is.
+func TestOldVariables(t *testing.T) {
+	got := OldVariables([]string{
+		"PATH=/usr/bin",
+		"WAYMARK_LISTEN=:9000",
+		"FORGEMAP_TITLE=Ours",
+		"WAYMARK_TITLE=secret-title",
+		"NOT_WAYMARK_X=1",
+	})
+	if len(got) != 2 {
+		t.Fatalf("warnings %q, want one each for WAYMARK_LISTEN and WAYMARK_TITLE", got)
+	}
+	all := strings.Join(got, "\n")
+	for _, w := range []string{"WAYMARK_LISTEN", "FORGEMAP_LISTEN", "WAYMARK_TITLE", "FORGEMAP_TITLE"} {
+		if !strings.Contains(all, w) {
+			t.Errorf("warnings %q do not name %s", got, w)
+		}
+	}
+	for _, v := range []string{":9000", "secret-title", "NOT_WAYMARK", "PATH"} {
+		if strings.Contains(all, v) {
+			t.Errorf("warnings %q hold %q", got, v)
+		}
+	}
+	if w := OldVariables([]string{"PATH=/usr/bin", "FORGEMAP_LISTEN=:9000"}); len(w) != 0 {
+		t.Errorf("no WAYMARK_ variable, warnings %q", w)
 	}
 }
 
@@ -485,9 +553,118 @@ func TestSourceNamesIsACopy(t *testing.T) {
 	if got := strings.Join(SourceNames(), ","); got != want {
 		t.Errorf("SourceNames after a caller's edit = %s, want %s", got, want)
 	}
-	c := Config{Site: Site{Timezone: "UTC"}, Ideas: Ideas{Marker: "waymark-idea:"}, Notes: Notes{Type: "none"},
+	c := Config{Site: Site{Timezone: "UTC"}, Ideas: Ideas{Marker: "forgemap-idea:"}, Notes: Notes{Type: "none"},
 		Forges: []Forge{{ID: "gitea", Type: "gitea", URL: "https://git.example.com"}}}
 	if err := c.Validate(); err != nil {
 		t.Errorf("forge id gitea refused after a caller's edit: %v", err)
+	}
+}
+
+// forks is false unless set: forges[].forks in a file, per forge, or
+// FORGEMAP_FORKS for both forges of the environment-only quick start (true or
+// false; anything else fails validation, naming the variable). A file does
+// not read the variable.
+func TestForksDefaultAndEnv(t *testing.T) {
+	p := writeCfg(t, "forges:\n  - {id: g, type: github}\n  - {id: h, type: github, forks: true}\n")
+	c, err := Load(p, env(map[string]string{"FORGEMAP_FORKS": "true"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Forges[0].Forks || !c.Forges[1].Forks {
+		t.Errorf("file: forks = %v, %v; want false, true", c.Forges[0].Forks, c.Forges[1].Forks)
+	}
+	quick := map[string]string{"GITHUB_TOKEN": "t", "GITEA_URL": "https://git.example.com", "GITEA_TOKEN": "g"}
+	with := func(k, v string) map[string]string {
+		out := map[string]string{k: v}
+		for mk, mv := range quick {
+			out[mk] = mv
+		}
+		return out
+	}
+	for _, tc := range []struct {
+		name string
+		env  map[string]string
+		want bool
+	}{
+		{"env-only, unset", quick, false},
+		{"env-only, true", with("FORGEMAP_FORKS", "true"), true},
+		{"env-only, false", with("FORGEMAP_FORKS", "false"), false},
+	} {
+		c, err := Load("", env(tc.env))
+		if err != nil {
+			t.Fatalf("%s: %v", tc.name, err)
+		}
+		if len(c.Forges) != 2 || c.Forges[0].Forks != tc.want || c.Forges[1].Forks != tc.want {
+			t.Errorf("%s: forges = %+v, want forks %v on both", tc.name, c.Forges, tc.want)
+		}
+		if err := c.Validate(); err != nil {
+			t.Errorf("%s: %v", tc.name, err)
+		}
+	}
+	c, err = Load("", env(with("FORGEMAP_FORKS", "yes please")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Validate(); err == nil || !strings.Contains(err.Error(), `FORGEMAP_FORKS: "yes please" is not true or false`) {
+		t.Errorf("bad FORGEMAP_FORKS: err %v, want it named", err)
+	}
+}
+
+// TokenSetting names where a forge's token is set, for a status that says
+// what to fix: the variable in the quick start, else the file's key. Never a
+// value.
+func TestTokenSetting(t *testing.T) {
+	c, err := Load("", env(map[string]string{"GITEA_URL": "https://git.example.com", "GITEA_TOKEN": "s3cret", "GITHUB_TOKEN": "gh"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if g, h := c.TokenSetting("gitea"), c.TokenSetting("github"); g != "GITEA_TOKEN" || h != "GITHUB_TOKEN" {
+		t.Errorf("quick start: %q, %q; want GITEA_TOKEN, GITHUB_TOKEN", g, h)
+	}
+	c, err = Load(writeCfg(t, "forges:\n  - {id: home, type: gitea, url: https://git.example.com, token: s3cret}\n  - {id: hub, type: github}\n"), env(nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if g, h := c.TokenSetting("home"), c.TokenSetting("hub"); g != "forges[0].token" || h != "forges[1].token" {
+		t.Errorf("file: %q, %q; want forges[0].token, forges[1].token", g, h)
+	}
+}
+
+// refresh is on unless turned off: by the file's key, else by FORGEMAP_REFRESH
+// (read only when the file has no key; a value that is not a boolean fails
+// validation, naming the variable).
+func TestRefreshDefaultAndEnv(t *testing.T) {
+	noKey := writeCfg(t, "forges:\n  - {id: g, type: github}\n")
+	off := writeCfg(t, "refresh: false\nforges:\n  - {id: g, type: github}\n")
+	on := writeCfg(t, "refresh: true\nforges:\n  - {id: g, type: github}\n")
+	for _, tc := range []struct {
+		name, path string
+		env        map[string]string
+		wantOff    bool
+	}{
+		{"file without the key", noKey, nil, false},
+		{"file false", off, nil, true},
+		{"file true, env false", on, map[string]string{"FORGEMAP_REFRESH": "false"}, false},
+		{"file without the key, env false", noKey, map[string]string{"FORGEMAP_REFRESH": "false"}, true},
+		{"env-only, unset", "", map[string]string{"GITHUB_TOKEN": "t"}, false},
+		{"env-only, false", "", map[string]string{"GITHUB_TOKEN": "t", "FORGEMAP_REFRESH": "false"}, true},
+	} {
+		c, err := Load(tc.path, env(tc.env))
+		if err != nil {
+			t.Fatalf("%s: %v", tc.name, err)
+		}
+		if c.RefreshOff != tc.wantOff {
+			t.Errorf("%s: refresh off = %v, want %v", tc.name, c.RefreshOff, tc.wantOff)
+		}
+		if err := c.Validate(); err != nil {
+			t.Errorf("%s: %v", tc.name, err)
+		}
+	}
+	c, err := Load("", env(map[string]string{"GITHUB_TOKEN": "t", "FORGEMAP_REFRESH": "nope"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Validate(); c.RefreshOff || err == nil || !strings.Contains(err.Error(), `FORGEMAP_REFRESH: "nope" is not true or false`) {
+		t.Errorf("bad FORGEMAP_REFRESH: off %v, err %v", c.RefreshOff, err)
 	}
 }

@@ -281,14 +281,27 @@ func (w *World) gitea(rw http.ResponseWriter, r *http.Request, p string) {
 	case p == "/user":
 		writeJSON(rw, r, w.giteaUser(Login), false)
 		return
-	case p == "/user/repos":
+	case p == "/user/repos" || (strings.HasSuffix(p, "/repos") && (strings.HasPrefix(p, "/orgs/") || strings.HasPrefix(p, "/users/"))):
+		// /user/repos is everything the token sees; /orgs/{o}/repos and
+		// /users/{o}/repos one owner's, 404 for an owner the world lacks.
+		owner := ""
+		if p != "/user/repos" {
+			_, rest, _ := strings.Cut(strings.TrimPrefix(p, "/"), "/")
+			owner = strings.TrimSuffix(rest, "/repos")
+			if !strings.EqualFold(owner, Owner) && !(strings.HasPrefix(p, "/users/") && strings.EqualFold(owner, Login)) {
+				jsonError(rw, http.StatusNotFound, "The target couldn't be found.")
+				return
+			}
+		}
 		if w.FailList {
 			http.Error(rw, "Bad Gateway", http.StatusBadGateway)
 			return
 		}
 		all := []any{}
 		for _, repo := range w.repos("gitea") {
-			all = append(all, w.giteaRepo(repo))
+			if owner == "" || strings.EqualFold(repo.Owner, owner) {
+				all = append(all, w.giteaRepo(repo))
+			}
 		}
 		items, _ := page(all, intParam(q, "limit", 30), intParam(q, "page", 1))
 		rw.Header().Set("X-Total-Count", strconv.Itoa(len(all)))

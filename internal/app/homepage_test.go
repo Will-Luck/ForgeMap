@@ -8,10 +8,10 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/Will-Luck/waymark/internal/config"
-	"github.com/Will-Luck/waymark/internal/model"
-	"github.com/Will-Luck/waymark/internal/sources/probe"
-	"github.com/Will-Luck/waymark/internal/web"
+	"github.com/Will-Luck/forgemap/internal/config"
+	"github.com/Will-Luck/forgemap/internal/model"
+	"github.com/Will-Luck/forgemap/internal/sources/probe"
+	"github.com/Will-Luck/forgemap/internal/web"
 )
 
 // homepages serves websites: /down answers 503, anything else 200. It
@@ -214,14 +214,14 @@ func TestGitHubOnlySiteSaysGitHub(t *testing.T) {
 	}
 }
 
-// Every request names Waymark and its version: waymark/<version> to the
+// Every request names ForgeMap and its version: ForgeMap/<version> to the
 // forges (GitHub asks every API client for a User-Agent), the F-Droid index
-// and the Docker Engine API, waymark-probe/<version> for probes. A config
+// and the Docker Engine API, ForgeMap-probe/<version> for probes. A config
 // with no version (tests) says dev.
 func TestUserAgents(t *testing.T) {
 	for _, c := range []struct{ version, client, probe string }{
-		{"1.2.3", "waymark/1.2.3", "waymark-probe/1.2.3"},
-		{"", "waymark/dev", "waymark-probe/dev"},
+		{"1.2.3", "ForgeMap/1.2.3", "ForgeMap-probe/1.2.3"},
+		{"", "ForgeMap/dev", "ForgeMap-probe/dev"},
 	} {
 		hp := newHomepages(t)
 		h := newAcmeHost(t)

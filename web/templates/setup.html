@@ -1,0 +1,103 @@
+{{define "main"}}{{$v := .Data}}{{$e := $v.Form.Field}}
+<div class="bare-main{{if eq $v.Step 2}} wide{{end}}">
+{{if and (eq $v.Step 1) $v.Closed}}
+  <h1>{{icon "hourglass"}}Setup time has run out</h1>
+  {{template "steps" 1}}
+  <section class="form-card">
+    <p>A new install can be set up only in the first {{$v.Window}} after ForgeMap starts, so that nobody else on the network can claim it.</p>
+    <p>Restart ForgeMap, then open this page again. With Docker: <code class="nobr">docker restart &lt;container&gt;</code>, or stop and start the forgemap program.</p>
+    <div class="form-foot"><a class="btn accent" href="/setup">Try again</a></div>
+  </section>
+{{else if eq $v.Step 1}}
+  <h1>Welcome to ForgeMap</h1>
+  <p class="lede">Three steps and your projects are on the page. Everything you enter stays on this server.</p>
+  {{template "steps" 1}}
+  <p class="callout" data-setup-left="{{$v.LeftSeconds}}">{{icon "timer"}}<span>A new install can be set up only in its first {{$v.Window}}. Time left: <b data-left-words>{{$v.Left}}</b>.</span></p>
+  <p class="sr" role="status" aria-live="polite" data-left-said></p>
+  <form class="form" method="post" action="/setup/account">
+    <section class="form-card">
+      <h2>{{icon "user"}}Make the admin account</h2>
+      {{template "refusedTop" (dict "F" $v.Form "Lead" "Not done yet." "One" "box needs" "Many" "boxes need")}}
+      {{template "formTop" $v.Form.Top}}
+      <div class="field">
+        <label for="username">Username</label>
+        <input type="text" class="input" id="username" autocomplete="username" autocapitalize="none" spellcheck="false" required{{with index $e "username"}} aria-invalid="true" aria-describedby="err-username"{{end}} name="username" value="{{$v.Username}}">
+        {{template "fieldErr" (dict "Name" "username" "Msg" (index $e "username"))}}
+      </div>
+      <div class="field">
+        <label for="password">Password</label>
+        <input type="password" class="input" id="password" autocomplete="new-password" required{{with index $e "password"}} aria-invalid="true"{{end}} aria-describedby="hint-password{{with index $e "password"}} err-password{{end}}" name="password" value="">
+        <p class="field-hint" id="hint-password">12 characters or more.</p>
+        {{template "fieldErr" (dict "Name" "password" "Msg" (index $e "password"))}}
+      </div>
+      <div class="field">
+        <label for="confirm">Password again</label>
+        <input type="password" class="input" id="confirm" autocomplete="new-password" required{{with index $e "confirm"}} aria-invalid="true" aria-describedby="err-confirm"{{end}} name="confirm" value="">
+        {{template "fieldErr" (dict "Name" "confirm" "Msg" (index $e "confirm"))}}
+      </div>
+    </section>
+    <div class="form-foot">
+      <p class="field-hint">Just looking? Start ForgeMap with <code>-demo</code> to see an invented team.</p>
+      <button class="btn accent">Continue</button>
+    </div>
+  </form>
+{{else if eq $v.Step 2}}
+  <h1>Where is your code?</h1>
+  <p class="lede">Connect one forge or several. ForgeMap only ever reads: give it a read-only token.</p>
+  {{template "steps" 2}}
+  {{with $v.Settings.Forges}}<section class="form-card">
+    <h2>{{icon "git-branch"}}Connected</h2>
+    {{range .}}<div class="frow">
+      <div class="frow-main"><b>{{.Name}}</b>{{with .Address}} <small class="mono">{{.}}</small>{{end}}</div>
+      <a class="btn" href="/settings/forges/{{.ID}}">Edit</a>
+    </div>{{end}}
+  </section>{{end}}
+  <section class="form-card">
+    <h2>{{icon "plus"}}{{if $v.Settings.Forges}}Add another forge{{else}}Add a forge{{end}}</h2>
+    {{template "forgeAdd" (dict "Form" $v.Form "Add" $v.Add)}}
+  </section>
+  <div class="form-foot">
+    {{if $v.Settings.Forges}}<a class="btn accent" href="/setup?step=3">Continue</a>{{else}}<p class="field-hint">Connect a forge to continue.</p>{{end}}
+  </div>
+{{else}}{{$m := $v.Settings.Main}}
+  <h1>The page itself</h1>
+  <p class="lede">All of this can be changed later in Settings.</p>
+  {{template "steps" 3}}
+  <form class="form" method="post" action="/setup/finish">
+    {{template "refusedTop" (dict "F" $v.Form "Lead" "Not saved." "One" "setting needs" "Many" "settings need")}}
+    {{template "formTop" $v.Form.Top}}
+    <section class="form-card">
+      <div class="field">
+        <label for="site.title">Page title</label>
+        <input type="text" class="input" id="site.title"{{with index $e "site.title"}} aria-invalid="true" aria-describedby="err-site.title"{{end}} name="site.title" value="{{$m.Title}}">
+        {{template "fieldErr" (dict "Name" "site.title" "Msg" (index $e "site.title"))}}
+      </div>
+      <div class="field">
+        <label for="site.timezone">Time zone</label>
+        <input type="text" class="input" id="site.timezone" list="zones" autocomplete="off" spellcheck="false" data-zone-guess{{with index $e "site.timezone"}} aria-invalid="true"{{end}} aria-describedby="hint-site.timezone{{with index $e "site.timezone"}} err-site.timezone{{end}}" name="site.timezone" value="{{$m.Timezone}}">
+        <datalist id="zones"></datalist>
+        <p class="field-hint" id="hint-site.timezone">Like Europe/London.</p>
+        {{template "fieldErr" (dict "Name" "site.timezone" "Msg" (index $e "site.timezone"))}}
+      </div>
+    </section>
+    <section class="form-card">
+      <h2 id="who">{{icon "lock"}}Who can see the page?</h2>
+      <div role="radiogroup" aria-labelledby="who">
+        <label class="choice"><input type="radio" name="sign_in" value="on"{{if $m.SignInToView}} checked{{end}}><span><b>Only me, after signing in</b><small>The whole page asks for your username and password.</small></span></label>
+        <label class="choice"><input type="radio" name="sign_in" value="off"{{if not $m.SignInToView}} checked{{end}}><span><b>Anyone who can reach it</b><small>Fine on a home network. Settings still need your password. Private repos stay hidden.</small></span></label>
+      </div>
+      {{template "fieldErr" (dict "Name" "sign_in" "Msg" (index $e "sign_in"))}}
+      <div class="toggle">
+        <input type="checkbox" class="switch" id="include_private" data-needs-signin{{with index $e "include_private"}} aria-invalid="true"{{end}} aria-describedby="hint-include_private{{with index $e "include_private"}} err-include_private{{end}}" name="include_private" value="on"{{if $m.IncludePrivate}} checked{{end}}>
+        <div><label for="include_private"><b>Show private repos</b></label><p class="field-hint" id="hint-include_private">Only possible when the page asks for sign-in.</p></div>
+      </div>
+      {{template "fieldErr" (dict "Name" "include_private" "Msg" (index $e "include_private"))}}
+    </section>
+    <div class="form-foot">
+      <a class="btn" href="/setup?step=2">Back</a>
+      <button class="btn accent">Finish and open the page</button>
+    </div>
+  </form>
+{{end}}
+</div>
+{{end}}

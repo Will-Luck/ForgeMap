@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Will-Luck/waymark/internal/model"
+	"github.com/Will-Luck/forgemap/internal/model"
 )
 
 // sinceSite is a site whose only content is evs (sorted newest first, as

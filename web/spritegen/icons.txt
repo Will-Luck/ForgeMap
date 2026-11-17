@@ -64,6 +64,7 @@ history
 hourglass
 images
 info
+key-round
 keyboard
 layers
 layout-dashboard
@@ -95,6 +96,7 @@ package-check
 pause
 pen-line
 plug
+plus
 printer
 puzzle
 radio
@@ -112,6 +114,7 @@ shield-check
 ship
 shuffle
 sigma
+sliders-horizontal
 smartphone
 snowflake
 sparkles

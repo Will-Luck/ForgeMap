@@ -4,8 +4,9 @@
 .gitea
 .github
 .playwright-mcp
-/waymark
+/forgemap
 dist
+out/
 testdata
 docs
 scripts

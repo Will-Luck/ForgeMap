@@ -14,13 +14,13 @@ import (
 	"sync"
 	"unicode"
 
-	"github.com/Will-Luck/waymark/internal/derive"
-	"github.com/Will-Luck/waymark/internal/forge"
-	"github.com/Will-Luck/waymark/internal/model"
-	"github.com/Will-Luck/waymark/internal/registry"
-	"github.com/Will-Luck/waymark/internal/sources/docker"
-	"github.com/Will-Luck/waymark/internal/sources/fdroid"
-	"github.com/Will-Luck/waymark/internal/sources/probe"
+	"github.com/Will-Luck/forgemap/internal/derive"
+	"github.com/Will-Luck/forgemap/internal/forge"
+	"github.com/Will-Luck/forgemap/internal/model"
+	"github.com/Will-Luck/forgemap/internal/registry"
+	"github.com/Will-Luck/forgemap/internal/sources/docker"
+	"github.com/Will-Luck/forgemap/internal/sources/fdroid"
+	"github.com/Will-Luck/forgemap/internal/sources/probe"
 )
 
 // passErrors gathers one pass's failures over the forges; the forge ids show
@@ -140,7 +140,7 @@ func (a *App) forgeHeatmap(ctx context.Context, fs *forgeState) (pts []forge.Hea
 }
 
 // filedQuery is what the filed-idea search looks for: the marker up to its
-// last letter or digit ("waymark-idea:" gives "waymark-idea"). Only file
+// last letter or digit ("forgemap-idea:" gives "forgemap-idea"). Only file
 // ideas are filed, so with no ideas file it is "" and there is no search.
 func (a *App) filedQuery() string {
 	if !isSet(a.cfg.Ideas.File) {
@@ -287,7 +287,7 @@ func (a *App) collectDockerAPI(ctx context.Context) {
 		return
 	}
 	defer a.running.docker.Unlock()
-	feed, err := docker.FetchAPI(ctx, a.cfg.Docker.Host, "waymark/"+buildVersion(a.cfg))
+	feed, err := docker.FetchAPI(ctx, a.cfg.Docker.Host, "ForgeMap/"+buildVersion(a.cfg))
 	if err != nil {
 		a.setStatus("docker", err, nilTime)
 		return
@@ -380,6 +380,11 @@ func (a *App) collectProbes(ctx context.Context) {
 		return
 	}
 	defer a.running.probes.Unlock()
+	// One stamp for the pass, by the app's clock: the same now as the
+	// assemble and every other source, so the history, the last result and
+	// the rule that counts failed checks in a row agree, and tests and the
+	// demo repeat. Each check's own wall-clock stamp is replaced below.
+	at := a.now()
 	a.mu.Lock()
 	targets := a.probeTargetsLocked()
 	// Until every forge has listed once since start, the targets leave out
@@ -409,6 +414,9 @@ func (a *App) collectProbes(ctx context.Context) {
 	if ctx.Err() != nil {
 		// Cut short (shutdown): the results say "context canceled", not down.
 		return
+	}
+	for i := range results {
+		results[i].At = at
 	}
 	keep := map[string]bool{}
 	a.mu.Lock()
@@ -494,12 +502,11 @@ func (a *App) collectFDroid(ctx context.Context) {
 	}
 	defer a.running.fdroid.Unlock()
 	a.mu.Lock()
-	var indexes []string
-	seen := map[string]bool{}
-	for _, p := range a.reg.Projects {
-		if p.FDroid != nil && p.FDroid.Index != "" && !seen[p.FDroid.Index] {
-			seen[p.FDroid.Index] = true
-			indexes = append(indexes, p.FDroid.Index)
+	indexes, wanted := a.fdroidWantedLocked()
+	last := map[string]fdroidData{}
+	for _, u := range indexes {
+		if d, ok := a.fdroid[u]; ok {
+			last[u] = d
 		}
 	}
 	a.mu.Unlock()
@@ -508,13 +515,22 @@ func (a *App) collectFDroid(ctx context.Context) {
 	}
 	var errs []string
 	for _, u := range indexes {
-		pkgs, err := fdroid.Fetch(ctx, a.httpc, u, "waymark/"+buildVersion(a.cfg))
+		prev, had := last[u]
+		var cond fdroid.Validators
+		if had && covers(prev.wanted, wanted[u]) {
+			cond = prev.validators
+		}
+		res, err := fdroid.Fetch(ctx, a.httpc, u, "ForgeMap/"+buildVersion(a.cfg), wanted[u], cond)
 		if err != nil {
 			errs = append(errs, err.Error())
 			continue
 		}
+		d := fdroidData{pkgs: res.Packages, at: a.now(), validators: res.Validators, wanted: wanted[u]}
+		if res.NotModified { // the packages read last time stand; the source is fresh
+			d.pkgs, d.wanted = prev.pkgs, prev.wanted
+		}
 		a.mu.Lock()
-		a.fdroid[u] = fdroidData{pkgs: pkgs, at: a.now()}
+		a.fdroid[u] = d
 		a.mu.Unlock()
 	}
 	if len(errs) > 0 {
@@ -525,104 +541,261 @@ func (a *App) collectFDroid(ctx context.Context) {
 	a.kickAssemble()
 }
 
+// fdroidWantedLocked is the F-Droid indexes the projects file names, in file
+// order, and the packages it names on each, by index URL.
+func (a *App) fdroidWantedLocked() (indexes []string, wanted map[string]map[string]bool) {
+	wanted = map[string]map[string]bool{}
+	for _, p := range a.reg.Projects {
+		if p.FDroid == nil || p.FDroid.Index == "" {
+			continue
+		}
+		u := p.FDroid.Index
+		if wanted[u] == nil {
+			wanted[u] = map[string]bool{}
+			indexes = append(indexes, u)
+		}
+		wanted[u][p.FDroid.Package] = true
+	}
+	return indexes, wanted
+}
+
+// fdroidBehind reports whether the projects file names a package that the
+// last read of its index left out, because it was named after that read.
+func (a *App) fdroidBehind() bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	_, wanted := a.fdroidWantedLocked()
+	for u, want := range wanted {
+		if d, ok := a.fdroid[u]; ok && !covers(d.wanted, want) {
+			return true
+		}
+	}
+	return false
+}
+
+// kickFDroid asks Run's F-Droid loop for catchUpFDroid.
+func (a *App) kickFDroid() {
+	select {
+	case a.fdroidCh <- struct{}{}:
+	default:
+	}
+}
+
+// catchUpFDroid reads the F-Droid indexes now when the projects file names a
+// package the last read left out, so it shows within the minute, not at the
+// next FDroidEvery. With nothing new named it asks nothing. A read in flight
+// may have begun before the reload: it waits for that read, then looks.
+func (a *App) catchUpFDroid(ctx context.Context) {
+	a.running.fdroid.Lock() // held only to wait for the read in flight
+	a.running.fdroid.Unlock()
+	if a.fdroidBehind() {
+		a.collectFDroid(ctx)
+	}
+}
+
+// covers reports whether have holds every key of want.
+func covers(have, want map[string]bool) bool {
+	for k := range want {
+		if !have[k] {
+			return false
+		}
+	}
+	return true
+}
+
 // collectMirrors reads every mirror view with FetchMirror, the light read:
 // each project's first mirror, or its primary when that forge gives no
 // detail without a token.
 func (a *App) collectMirrors(ctx context.Context) { a.readMirrors(ctx, nil) }
 
-// retryMirrors reads the mirror views again, at once, on each forge whose
-// last mirror pass a rate limit cut short, once that limit has ended: else
-// they wait for the next MirrorEvery, and the forge shows the limit all that
-// while. With no such forge it asks nothing.
+// retryMirrors reads mirror views again before the next MirrorEvery: those a
+// rate limit kept from being read, once it has ended (else the forge shows
+// the limit all that while; the views that pass did read are not read
+// again), and each view whose last read failed for a passing reason, once
+// its wait (nextMirrorWait) is over. With nothing due it asks nothing. A
+// wait ends on the check nearest its end, half a check early at most: the
+// checks and the passes that set the waits run a little apart, and a wait
+// just missed would add a whole check to it.
 func (a *App) retryMirrors(ctx context.Context) {
 	a.mu.Lock()
-	due := map[string]bool{}
+	now := a.now()
+	keys := map[string]bool{}
 	for _, fs := range a.forges {
-		if fs.mirrorLimited && !a.limitedLocked(fs) {
-			due[fs.cfg.ID] = true
+		if a.limitedLocked(fs) {
+			continue
+		}
+		for key := range fs.mirrorCut {
+			keys[key] = true
+		}
+		for key, w := range fs.mirrorBackoff {
+			if !now.Add(MirrorRetryEvery / 2).Before(w.next) {
+				keys[key] = true
+			}
 		}
 	}
 	a.mu.Unlock()
-	if len(due) > 0 {
-		a.readMirrors(ctx, due)
+	if len(keys) > 0 {
+		a.readMirrors(ctx, keys)
 	}
 }
 
-// readMirrors is one mirror pass over the forges in only (nil: every forge).
-func (a *App) readMirrors(ctx context.Context, only map[string]bool) {
+// dueSources are the sources with their own cadence that a refresh runs:
+// each whose last good read is older than RefreshFloor (or failed), and the
+// mirror views due one by one: one never asked (the projects file has just
+// named it), one last asked RefreshMirrorFloor ago or more, one whose last
+// read failed for a passing reason (mirrorBackoff), and one a rate limit cut.
+// A mirror refused or not there waits for its floor like a good one. A forge
+// waiting for its rate limit is asked nothing by them in any case. Docker
+// and notes are local reads: fullCycle runs them always.
+func (a *App) dueSources() []func(context.Context) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	now := a.now()
+	var out []func(context.Context)
+	for _, s := range []struct {
+		name string
+		fn   func(context.Context)
+	}{{"heatmap", a.collectHeatmap}, {"ideas", a.collectFiled}, {"probes", a.collectProbes}, {"fdroid", a.collectFDroid}} {
+		if st, ok := a.status[s.name]; !ok || !st.OK || now.Sub(st.RefreshedAt) >= RefreshFloor {
+			out = append(out, s.fn)
+		}
+	}
+	keys := map[string]bool{}
+	for _, p := range a.projectsLocked() {
+		ref, _, ok := a.mirrorRefLocked(p)
+		if !ok {
+			continue
+		}
+		fs, key := a.byID[ref.Forge], repoKey(ref.Forge, ref.FullName)
+		at, asked := fs.mirrorReadAt[key]
+		_, passing := fs.mirrorBackoff[key]
+		if !asked || now.Sub(at) >= RefreshMirrorFloor || passing || fs.mirrorCut[key] {
+			keys[key] = true
+		}
+	}
+	if len(keys) > 0 {
+		out = append(out, func(ctx context.Context) { a.readMirrors(ctx, keys) })
+	}
+	return out
+}
+
+// forgeNotFound reports whether err is f's 404: a repo that is not there.
+func forgeNotFound(f forge.Forge, err error) bool {
+	nf, ok := f.(interface{ IsNotFound(error) bool })
+	return ok && nf.IsNotFound(err)
+}
+
+// readMirrors is one mirror pass: every mirror view when keys is nil, else
+// the views whose repo key is in keys. A pass replaces the failures of what
+// it was asked to read (dropping those no longer a mirror) and keeps the
+// others, so a full pass leaves a forge with no mirrors no mirror error.
+// A failed read's wait counts from the pass's start, the check's own time,
+// not from the end of the read (its retries take seconds).
+func (a *App) readMirrors(ctx context.Context, keys map[string]bool) {
 	if !a.running.mirrors.TryLock() {
 		return
 	}
 	defer a.running.mirrors.Unlock()
-	in := func(id string) bool { return only == nil || only[id] }
+	start := a.now()
+	asks := func(key string) bool { return keys == nil || keys[key] }
 	a.mu.Lock()
 	var targets []registry.RepoRef
 	asked := map[string]bool{}
 	seen := map[string]bool{}
 	for _, p := range a.projectsLocked() {
 		ref, _, ok := a.mirrorRefLocked(p)
-		if key := repoKey(ref.Forge, ref.FullName); ok && in(ref.Forge) && !seen[key] {
+		if key := repoKey(ref.Forge, ref.FullName); ok && asks(key) && !seen[key] {
 			seen[key] = true
 			asked[ref.Forge] = true
 			targets = append(targets, ref)
 		}
 	}
-	// A forge with no mirrors left has no mirror error left either.
-	for _, fs := range a.forges {
-		if in(fs.cfg.ID) && !asked[fs.cfg.ID] && (len(fs.mirrorFailed) > 0 || fs.mirrorLimited) {
-			fs.mirrorFailed, fs.mirrorLimited = nil, false
-			a.forgeStatusLocked(fs)
-		}
-	}
 	a.mu.Unlock()
-	if len(targets) == 0 {
-		return
-	}
 	errs := map[string][]repoFailure{}
-	limited := map[string]bool{} // forges a rate limit kept from some mirror
+	cut := map[string][]string{} // forge id -> the mirrors a rate limit kept from being read
 	for _, ref := range targets {
 		key := repoKey(ref.Forge, ref.FullName)
 		fs := a.byID[ref.Forge]
 		if wait, limitErr := a.limitState(fs); wait { // the last good view stands
 			errs[ref.Forge] = append(errs[ref.Forge], repoFailure{key, limitErr.Error()})
-			limited[ref.Forge] = true
+			cut[ref.Forge] = append(cut[ref.Forge], key)
 			continue
 		}
 		m, err := fs.f.FetchMirror(ctx, ref.FullName, a.now())
-		if err != nil {
-			a.mu.Lock()
-			if a.rateLimitLocked(fs, err) {
-				limited[ref.Forge] = true
-				err = limitShown(fs)
-			}
-			a.mu.Unlock()
-			errs[ref.Forge] = append(errs[ref.Forge], repoFailure{key, err.Error()})
-			continue
-		}
 		a.mu.Lock()
-		if m.Private && !a.cfg.IncludePrivate {
-			// The view is the first to say so (no list or by-name read did):
-			// left out from now on as if read by name, so it is neither
-			// linked nor read again; a by-name read can still clear it.
-			delete(a.mirrors, key)
-			a.byID[ref.Forge].namedDropped[key] = true
-		} else {
-			a.mirrors[key] = m
+		fs.mirrorReadAt[key] = start
+		switch {
+		case err == nil:
+			delete(fs.mirrorBackoff, key)
+			if m.Private && !a.cfg.IncludePrivate {
+				// The view is the first to say so (no list or by-name read did):
+				// left out from now on as if read by name, so it is neither
+				// linked nor read again; a by-name read can still clear it.
+				delete(a.mirrors, key)
+				fs.namedDropped[key] = true
+			} else {
+				a.mirrors[key] = m
+			}
+		case a.rateLimitLocked(fs, err):
+			cut[ref.Forge] = append(cut[ref.Forge], key)
+			err = limitShown(fs)
+			delete(fs.mirrorBackoff, key)
+		case forgeNotFound(fs.f, err) || forge.Status(err)/100 == 4:
+			// Not there, or refused (401, 403, 410 ...): an answer that does
+			// not pass on its own is asked again at the next MirrorEvery.
+			delete(fs.mirrorBackoff, key)
+		default:
+			// A passing failure (a 5xx, a timeout, a dropped connection): read
+			// again soon.
+			w := nextMirrorWait(fs.mirrorBackoff[key].wait)
+			fs.mirrorBackoff[key] = mirrorWait{wait: w, next: start.Add(w)}
 		}
 		a.mu.Unlock()
+		if err != nil {
+			errs[ref.Forge] = append(errs[ref.Forge], repoFailure{key, err.Error()})
+		}
 	}
 	now := a.now()
 	a.mu.Lock()
 	for _, fs := range a.forges {
-		if !asked[fs.cfg.ID] {
-			continue
+		id := fs.cfg.ID
+		var failed []repoFailure
+		for _, f := range fs.mirrorFailed {
+			if !asks(f.key) {
+				failed = append(failed, f)
+			}
 		}
-		fs.mirrorFailed, fs.mirrorLimited = errs[fs.cfg.ID], limited[fs.cfg.ID]
-		if len(fs.mirrorFailed) == 0 {
+		failed = append(failed, errs[id]...)
+		stillCut := map[string]bool{}
+		for key := range fs.mirrorCut {
+			if !asks(key) {
+				stillCut[key] = true
+			}
+		}
+		for _, key := range cut[id] {
+			stillCut[key] = true
+		}
+		for key := range fs.mirrorBackoff {
+			if asks(key) && !seen[key] {
+				delete(fs.mirrorBackoff, key) // no longer a mirror
+			}
+		}
+		for key := range fs.mirrorReadAt {
+			if asks(key) && !seen[key] {
+				delete(fs.mirrorReadAt, key)
+			}
+		}
+		changed := len(failed) != len(fs.mirrorFailed) || len(stillCut) != len(fs.mirrorCut)
+		fs.mirrorFailed, fs.mirrorCut = failed, stillCut
+		if asked[id] && len(failed) == 0 {
 			fs.mirrorAt = now
 		}
-		a.forgeStatusLocked(fs)
+		if asked[id] || changed {
+			a.forgeStatusLocked(fs)
+		}
 	}
 	a.mu.Unlock()
-	a.kickAssemble()
+	if len(targets) > 0 {
+		a.kickAssemble()
+	}
 }

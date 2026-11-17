@@ -4,29 +4,31 @@
     <h1 class="page-title">{{icon "lightbulb"}}Ideas <span class="count">{{num $v.Total}}</span></h1>
     {{if $v.FromFile}}<p class="lead">Ideas from the ideas file{{with $v.Roundup}} (updated <b>{{.}}</b>){{end}}{{if $v.FromLabels}} and from issues labelled {{with $v.Labels}}{{.}}{{else}}as ideas{{end}}{{end}}. File one as an issue to make it real.</p>
     {{- else if $v.FromLabels}}<p class="lead">From issues labelled {{with $v.Labels}}{{.}}{{else}}as ideas{{end}}.</p>{{end}}
-    {{if $v.Ideas}}<ul class="kind-counts" aria-label="Ideas by kind">
-      {{range $v.Kinds}}<li class="k-{{.Key}}"><span class="kc-ic">{{icon .Icon}}</span><span class="kc-num">{{.Count}}</span><span class="kc-label">{{.Label}}</span></li>{{end}}
-      {{if $v.FromFile}}<li class="k-filed"><span class="kc-ic">{{icon "circle-check"}}</span><span class="kc-num">{{$v.Filed}}</span><span class="kc-label">Already filed</span></li>{{end}}
-    </ul>{{end}}
   </header>
 {{if $v.Ideas}}
 
   <div class="idea-tools">
     <fieldset class="filter">
       <legend>Kind</legend>
-      <input type="radio" name="kind" id="k-all" value="" checked><label for="k-all">All <span class="n" data-n="all">{{$v.Total}}</span>{{range $v.Sizes}}<span class="n" data-n="s-{{.Key}}">{{.Count}}</span>{{end}}</label>
-      {{range $v.Kinds}}<input type="radio" name="kind" id="k-{{.Key}}" value="{{.Key}}"><label for="k-{{.Key}}" class="k-{{.Key}}">{{icon .Icon}}{{.Label}} <span class="n" data-n="all">{{.Count}}</span>{{range .By}}<span class="n" data-n="s-{{.Key}}">{{.Count}}</span>{{end}}</label>{{end}}
+      <input type="radio" name="kind" id="k-all" value=""{{if not $v.Sel.Kind}} checked{{end}}><label for="k-all">All <span class="n" data-n="all">{{$v.Total}}</span>{{range $v.Sizes}}<span class="n" data-n="s-{{.Key}}">{{.Count}}</span>{{end}}</label>
+      {{range $v.Kinds}}<input type="radio" name="kind" id="k-{{.Key}}" value="{{.Key}}"{{if eq .Key $v.Sel.Kind}} checked{{end}}><label for="k-{{.Key}}" class="k-{{.Key}}">{{icon .Icon}}{{.Label}} <span class="n" data-n="all">{{.Count}}</span>{{range .By}}<span class="n" data-n="s-{{.Key}}">{{.Count}}</span>{{end}}</label>{{end}}
     </fieldset>
     <fieldset class="filter">
       <legend>Size</legend>
-      <input type="radio" name="size" id="s-all" value="" checked><label for="s-all">Any size</label>
-      {{range $v.Sizes}}<input type="radio" name="size" id="s-{{.Key}}" value="{{.Key}}"><label for="s-{{.Key}}">{{.Label}} <span class="n" data-n="all">{{.Count}}</span>{{range .By}}<span class="n" data-n="k-{{.Key}}">{{.Count}}</span>{{end}}</label>{{end}}
+      <input type="radio" name="size" id="s-all" value=""{{if not $v.Sel.Size}} checked{{end}}><label for="s-all">Any size</label>
+      {{range $v.Sizes}}<input type="radio" name="size" id="s-{{.Key}}" value="{{.Key}}"{{if eq .Key $v.Sel.Size}} checked{{end}}><label for="s-{{.Key}}">{{.Label}} <span class="n" data-n="all">{{.Count}}</span>{{range .By}}<span class="n" data-n="k-{{.Key}}">{{.Count}}</span>{{end}}</label>{{end}}
     </fieldset>
+    {{if $v.FileIdeas}}<fieldset class="filter">
+      <legend>Issue</legend>
+      <input type="radio" name="filed" id="f-all" value=""{{if not $v.Sel.Filed}} checked{{end}}><label for="f-all">All</label>
+      <input type="radio" name="filed" id="f-yes" value="yes"{{if eq $v.Sel.Filed "yes"}} checked{{end}}><label for="f-yes">{{icon "circle-check"}}Filed <span class="n" data-n="all">{{$v.Filed}}</span></label>
+      <input type="radio" name="filed" id="f-no" value="no"{{if eq $v.Sel.Filed "no"}} checked{{end}}><label for="f-no">{{icon "list-plus"}}Not filed <span class="n" data-n="all">{{$v.Unfiled}}</span></label>
+    </fieldset>{{end}}
     <div class="idea-js">
       <label class="select" hidden data-js-show>{{icon "folder-git-2"}}<span class="sr">Project</span>
         <select id="idea-project" aria-label="Show ideas for one project">
           <option value="">All projects</option>
-          {{range $v.Projects}}<option value="{{.Key}}">{{.Label}} ({{.Count}})</option>{{end}}
+          {{range $v.Projects}}<option value="{{.Key}}"{{if eq .Key $v.Sel.Project}} selected{{end}}>{{.Label}} ({{.Count}})</option>{{end}}
         </select>
       </label>
       <button type="button" class="btn accent" data-surprise hidden data-js-show>{{icon "shuffle"}}Surprise me</button>

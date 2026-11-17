@@ -5,7 +5,7 @@ package hub
 import (
 	"sync"
 
-	"github.com/Will-Luck/waymark/internal/model"
+	"github.com/Will-Luck/forgemap/internal/model"
 )
 
 type Hub struct {

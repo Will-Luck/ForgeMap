@@ -7,6 +7,29 @@ const island = document.getElementById("graph");
 const svg = document.getElementById("map-svg");
 const scroller = document.querySelector("[data-map]");
 
+// On a phone the map waits behind "Show map" and the list leads (the server
+// sends the fold open, so the page reads the same without JS). The layout
+// below measures the labels, so it runs once the map is open; a wider
+// screen opens it again.
+const fold = document.querySelector("[data-map-fold]");
+const narrow = matchMedia("(width < 700px)");
+if (fold) {
+  if (narrow.matches) fold.open = false;
+  narrow.addEventListener("change", () => {
+    if (!narrow.matches) fold.open = true;
+  });
+  if (!fold.open) {
+    await new Promise((resolve) => {
+      const opened = () => {
+        if (!fold.open) return;
+        fold.removeEventListener("toggle", opened);
+        resolve();
+      };
+      fold.addEventListener("toggle", opened);
+    });
+  }
+}
+
 const KIND = { "depends-on": "depends on", "client-of": "client of", "fork-of": "fork of", deploys: "deploys", sibling: "sibling of", monitors: "monitors", supersedes: "supersedes" };
 const SVGNS = "http://www.w3.org/2000/svg";
 
@@ -21,13 +44,21 @@ if (data && svg) {
   const labelLayer = svg.querySelector(".edge-labels");
   const anchors = new Map(data.anchors.map((a) => [a.key, a]));
   const catLabels = new Map([...svg.querySelectorAll(".cat-label")].map((t) => [t.dataset.cat, t]));
-  const nodes = data.nodes.map((n) => {
-    const el = nodeEls.get(n.id);
+  // Each star owns a box: the circle plus its label underneath.
+  const boxWidth = (r, el) => {
     let lw = 0;
     try { lw = el?.querySelector(".node-label")?.getComputedTextLength() || 0; } catch { lw = 0; }
-    // Each star owns a box: the circle plus its label underneath.
-    return { ...n, vx: 0, vy: 0, fixed: false, el, hw: Math.max(n.r, lw / 2) + 8, hh: n.r + 15, oy: 8 };
+    return Math.max(r, lw / 2) + 8;
+  };
+  const nodes = data.nodes.map((n) => {
+    const el = nodeEls.get(n.id);
+    return { ...n, vx: 0, vy: 0, fixed: false, el, hw: boxWidth(n.r, el), hh: n.r + 15, oy: 8 };
   });
+  // The label size steps with the map's width (app.css), so the boxes above
+  // hold only for the size they were measured at.
+  const sample = svg.querySelector(".node-label");
+  const labelSize = () => (sample ? parseFloat(getComputedStyle(sample).fontSize) || 0 : 0);
+  let measuredAt = labelSize();
   // Category names are boxes held near their anchors; stars orbit around them.
   const cats = data.anchors.map((a) => {
     let w = 0;
@@ -289,6 +320,19 @@ if (data && svg) {
   };
   svg.addEventListener("pointerup", endDrag);
   svg.addEventListener("pointercancel", endDrag);
+
+  // A resize across a label step measures the labels again and lets the
+  // stars make room. A shut fold has nothing to measure; opening it checks.
+  const remeasure = () => {
+    if (fold && !fold.open) return;
+    const size = labelSize();
+    if (!size || size === measuredAt) return;
+    measuredAt = size;
+    for (const a of nodes) a.hw = boxWidth(a.r, a.el);
+    heat(0.3);
+  };
+  if (scroller && sample && typeof ResizeObserver === "function") new ResizeObserver(remeasure).observe(scroller);
+  fold?.addEventListener("toggle", remeasure);
 
   // Start on the middle of the map on narrow screens.
   if (scroller && scroller.scrollWidth > scroller.clientWidth) {

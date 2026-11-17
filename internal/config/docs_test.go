@@ -13,7 +13,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/Will-Luck/waymark/internal/registry"
+	"github.com/Will-Luck/forgemap/internal/registry"
 )
 
 const configDoc = "../../docs/configuration.md"
@@ -143,11 +143,13 @@ func TestDocsListEveryKey(t *testing.T) {
 	// Every variable set, so every branch that reads one runs.
 	asked := map[string]bool{}
 	getenv := func(k string) string { asked[k] = true; return "x" }
-	ResolvePath(getenv, func(string) bool { return false })
+	if _, err := ResolvePath(getenv, func(string) bool { return false }); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := Load("", getenv); err != nil {
 		t.Fatal(err)
 	}
-	for _, k := range []string{"WAYMARK_CONFIG", "GITEA_OWNERS", "GITHUB_TOKEN", "DATA_DIR"} {
+	for _, k := range []string{"FORGEMAP_CONFIG", "GITEA_OWNERS", "GITHUB_TOKEN", "DATA_DIR"} {
 		if !asked[k] {
 			t.Errorf("the env walk missed %s (asked %v)", k, asked)
 		}
@@ -161,11 +163,11 @@ func TestDocsListEveryKey(t *testing.T) {
 
 // The example shipped at the repo root is the one built into the binary.
 func TestExampleCopiesMatch(t *testing.T) {
-	root, err := os.ReadFile("../../waymark.example.yml")
+	root, err := os.ReadFile("../../forgemap.example.yml")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !bytes.Equal(root, ExampleYAML) {
-		t.Error("waymark.example.yml and internal/config/example.yml differ; copy one over the other")
+		t.Error("forgemap.example.yml and internal/config/example.yml differ; copy one over the other")
 	}
 }

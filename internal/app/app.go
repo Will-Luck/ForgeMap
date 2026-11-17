@@ -7,7 +7,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"hash/fnv"
 	"log"
+	"math/rand/v2"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -18,19 +20,18 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/Will-Luck/waymark/internal/config"
-	"github.com/Will-Luck/waymark/internal/derive"
-	"github.com/Will-Luck/waymark/internal/forge"
-	"github.com/Will-Luck/waymark/internal/hub"
-	"github.com/Will-Luck/waymark/internal/model"
-	"github.com/Will-Luck/waymark/internal/registry"
-	"github.com/Will-Luck/waymark/internal/sources/docker"
-	"github.com/Will-Luck/waymark/internal/sources/fdroid"
-	"github.com/Will-Luck/waymark/internal/sources/gitea"
-	"github.com/Will-Luck/waymark/internal/sources/github"
-	"github.com/Will-Luck/waymark/internal/sources/notes"
-	"github.com/Will-Luck/waymark/internal/sources/probe"
-	"github.com/Will-Luck/waymark/internal/store"
+	"github.com/Will-Luck/forgemap/internal/config"
+	"github.com/Will-Luck/forgemap/internal/derive"
+	"github.com/Will-Luck/forgemap/internal/forge"
+	"github.com/Will-Luck/forgemap/internal/hub"
+	"github.com/Will-Luck/forgemap/internal/model"
+	"github.com/Will-Luck/forgemap/internal/registry"
+	"github.com/Will-Luck/forgemap/internal/sources/docker"
+	"github.com/Will-Luck/forgemap/internal/sources/fdroid"
+	"github.com/Will-Luck/forgemap/internal/sources/gitea"
+	"github.com/Will-Luck/forgemap/internal/sources/notes"
+	"github.com/Will-Luck/forgemap/internal/sources/probe"
+	"github.com/Will-Luck/forgemap/internal/store"
 )
 
 // Cadences from the spec.
@@ -47,7 +48,7 @@ var (
 	MirrorEvery     = 30 * time.Minute
 	Debounce        = time.Second
 	SaveEvery       = 10 * time.Second
-	RefreshInterval = 20 * time.Second
+	RefreshInterval = 60 * time.Second
 	RegistryRetry   = 10 * time.Minute
 	FeedStaleAfter  = 5 * time.Minute
 	EventsShown     = 14 * 24 * time.Hour
@@ -67,7 +68,29 @@ var (
 	// carries the probe points too, so a crash loses at most this much of
 	// the 24 h uptime history and nothing else.
 	ProbeSaveEvery = 10 * time.Minute
+	// A refresh leaves a source with its own cadence alone while its last
+	// good read is younger than its floor (dueSources).
+	RefreshFloor       = 2 * time.Minute
+	RefreshMirrorFloor = 5 * time.Minute
+	// Each forge's loop starts up to this long after start (forgeDelay), so
+	// the forges are not all asked in the same second.
+	ForgeStartSpread = 10 * time.Second
 )
+
+// FDroidHeaderWait is how long an F-Droid server may take to start its
+// answer. The read's own deadline (fdroid.ReadTimeout, 2 minutes) is for
+// the large body; a hung server fails as fast as it did under the old 20 s
+// client timeout, and the first assemble at start waits for F-Droid.
+var FDroidHeaderWait = 20 * time.Second
+
+// fdroidClient reads F-Droid indexes: no timeout for the whole read, which
+// the read's own deadline bounds, but FDroidHeaderWait for the answer to
+// start.
+func fdroidClient() *http.Client {
+	t := http.DefaultTransport.(*http.Transport).Clone()
+	t.ResponseHeaderTimeout = FDroidHeaderWait
+	return &http.Client{Transport: t}
+}
 
 // EventsGrace is how long after start events wait for a forge that has not
 // listed its repos yet (ruling 50): after it, they go on without that forge.
@@ -85,7 +108,7 @@ type repoState struct {
 }
 
 // forgeState is one configured forge and the last good data read from it.
-// Every field but f and cfg is guarded by App.mu.
+// Every field but f, cfg and pass is guarded by App.mu.
 type forgeState struct {
 	f   forge.Forge
 	cfg config.Forge
@@ -111,13 +134,37 @@ type forgeState struct {
 	mirrorAt     time.Time
 	heat         []forge.HeatPoint
 	filed        []forge.Issue
-	// mirrorLimited: a rate limit kept the last mirror pass from some of
-	// this forge's mirrors; they are read again once it ends (retryMirrors).
-	mirrorLimited bool
+	// mirrorCut: the mirrors (by repo key) a rate limit kept from being
+	// read; they alone are read again once it ends (retryMirrors).
+	mirrorCut map[string]bool
+	// mirrorBackoff: the mirrors (by repo key) whose last read failed for a
+	// passing reason, and when retryMirrors reads each again.
+	mirrorBackoff map[string]mirrorWait
+	// mirrorReadAt: when each mirror (by repo key) was last asked, whatever
+	// the answer, as of the start of that pass. A refresh reads a mirror by
+	// it (dueSources).
+	mirrorReadAt map[string]time.Time
 	// limitUntil: the forge answered that its rate limit is spent (limitErr,
 	// which its status shows); nothing is asked of it before then.
 	limitUntil time.Time
 	limitErr   error
+	// capNote: what the last good list says of lists the client cut short
+	// (forge.ListCapped), shown as the forge's status note.
+	capNote string
+	// emptyNote says why the last good list kept no repo (emptyNoteLocked);
+	// listLogged is the last list error logged as it is.
+	emptyNote  string
+	listLogged string
+	// answering is what the last detail pass that told said of the forge:
+	// a read that succeeded says it answers; a read of a repo that had not
+	// failed before stopping the pass, with none succeeding, says it does
+	// not. A pass whose only failures are repos already failing tells
+	// nothing, so one repo that keeps failing alone keeps the status it had.
+	answering bool
+	// pass is held through a forge's pass (forgePass, or a full cycle's
+	// step for this forge): a forced call waits for the pass in flight, and
+	// no two passes of one forge overlap.
+	pass sync.Mutex
 }
 
 // known reports whether the forge has answered a list once, either way.
@@ -162,9 +209,30 @@ func withNamed(listing []forge.Repo, named map[string]forge.Repo) []forge.Repo {
 	return out
 }
 
+// mirrorWait is how long a mirror waits after a failed read (wait) and
+// when it is read again (next).
+type mirrorWait struct {
+	wait time.Duration
+	next time.Time
+}
+
+// nextMirrorWait is the wait after another failed read: MirrorRetryEvery
+// first, then twice the last, at most MirrorEvery.
+func nextMirrorWait(last time.Duration) time.Duration {
+	if last <= 0 {
+		return MirrorRetryEvery
+	}
+	return min(2*last, MirrorEvery)
+}
+
 type fdroidData struct {
 	pkgs map[string]fdroid.Package
 	at   time.Time
+	// validators and wanted are the last good read's: the next read sends the
+	// validators only while wanted holds every package the projects file
+	// names now (pkgs keeps only those).
+	validators fdroid.Validators
+	wanted     map[string]bool
 }
 
 type App struct {
@@ -214,11 +282,19 @@ type App struct {
 
 	kick      chan struct{}
 	refreshCh chan struct{}
+	// ticker makes each cadence loop's ticker, by loop name ("forge gitea",
+	// "files", "heatmap" ...): time.NewTicker, or a test's own channel.
+	ticker func(name string, every time.Duration) (<-chan time.Time, func())
+	// forgeDelay is how long forge i's loop waits before its first tick
+	// (up to ForgeStartSpread); tests set it to 0.
+	forgeDelay func(i int) time.Duration
+	// fdroidCh asks Run's F-Droid loop for a read before FDroidEvery: the
+	// projects file names a package the last read of its index left out.
+	fdroidCh chan struct{}
 
 	assembleMu  sync.Mutex
-	lastSummary string // guarded by assembleMu
-	detailMu    sync.Mutex
-	reposMu     sync.Mutex
+	lastSummary string     // guarded by assembleMu
+	regMu       sync.Mutex // one projects and ideas files load at a time (reloadRegistry)
 	cycles      atomic.Int64
 
 	// running holds one TryLock per collector: a forced cycle and the
@@ -226,21 +302,13 @@ type App struct {
 	running struct{ heatmap, filed, docker, probes, notes, fdroid, mirrors sync.Mutex }
 }
 
-// NewForges builds a client for each configured forge, in config order. Each
-// sends User-Agent waymark/<version>.
+// NewForges builds a client for each configured forge (NewForge), in config
+// order, each on its own HTTP client. Each sends User-Agent
+// ForgeMap/<version>.
 func NewForges(cfg config.Config) []forge.Forge {
-	ua := "waymark/" + buildVersion(cfg)
 	out := make([]forge.Forge, 0, len(cfg.Forges))
 	for _, f := range cfg.Forges {
-		if f.Type == "github" {
-			c := github.New(f.ID, f.URL, f.Token)
-			c.UserAgent = ua
-			out = append(out, c)
-		} else {
-			c := gitea.New(f.ID, f.URL+"/api/v1", f.Token)
-			c.UserAgent = ua
-			out = append(out, c)
-		}
+		out = append(out, NewForge(f, cfg.Version, nil))
 	}
 	return out
 }
@@ -264,31 +332,44 @@ func New(cfg config.Config, forges []forge.Forge) (*App, error) {
 		return nil, fmt.Errorf("%d forge clients for %d configured forges", len(forges), len(cfg.Forges))
 	}
 	a := &App{
-		cfg:       cfg,
-		now:       func() time.Time { return time.Now().UTC() },
-		byID:      map[string]*forgeState{},
-		httpc:     &http.Client{Timeout: 20 * time.Second},
-		probeC:    probe.NewClient(),
-		homeC:     probe.NewPublicClient(),
-		hub:       hub.New(64),
-		repoSt:    map[string]*repoState{},
-		mirrors:   map[string]*forge.Mirror{},
-		probes:    map[string]*probe.Result{},
-		notesAd:   notesAdapter(cfg),
-		notes:     map[string][]notes.Note{},
-		fdroid:    map[string]fdroidData{},
-		status:    map[string]model.SourceStatus{},
-		warned:    map[string]bool{},
-		kick:      make(chan struct{}, 1),
-		refreshCh: make(chan struct{}, 1),
+		cfg:        cfg,
+		now:        func() time.Time { return time.Now().UTC() },
+		byID:       map[string]*forgeState{},
+		httpc:      fdroidClient(), // F-Droid index reads; each has its own deadline (fdroid.ReadTimeout)
+		probeC:     probe.NewClient(),
+		homeC:      probe.NewPublicClient(),
+		hub:        hub.New(64),
+		repoSt:     map[string]*repoState{},
+		mirrors:    map[string]*forge.Mirror{},
+		probes:     map[string]*probe.Result{},
+		notesAd:    notesAdapter(cfg),
+		notes:      map[string][]notes.Note{},
+		fdroid:     map[string]fdroidData{},
+		status:     map[string]model.SourceStatus{},
+		warned:     map[string]bool{},
+		kick:       make(chan struct{}, 1),
+		refreshCh:  make(chan struct{}, 1),
+		fdroidCh:   make(chan struct{}, 1),
+		ticker:     realTicker,
+		forgeDelay: func(int) time.Duration { return rand.N(ForgeStartSpread) },
 	}
 	for i, f := range forges {
 		if f.ID() != cfg.Forges[i].ID {
 			return nil, fmt.Errorf("forge client %d is %q, but forges[%d] is %q", i, f.ID(), i, cfg.Forges[i].ID)
 		}
-		fs := &forgeState{f: f, cfg: cfg.Forges[i], dropped: map[string]bool{}, named: map[string]forge.Repo{}, namedDropped: map[string]bool{}}
+		fs := &forgeState{f: f, cfg: cfg.Forges[i], dropped: map[string]bool{}, named: map[string]forge.Repo{}, namedDropped: map[string]bool{}, mirrorBackoff: map[string]mirrorWait{}, mirrorReadAt: map[string]time.Time{}}
 		a.forges = append(a.forges, fs)
 		a.byID[fs.cfg.ID] = fs
+		// A client that dates a rate limit's end reads the app's clock, so
+		// the two agree on when an allowance comes back.
+		if c, ok := f.(interface{ SetClock(func() time.Time) }); ok {
+			c.SetClock(func() time.Time { return a.now() })
+		}
+		// A browser-set-up install's forge addresses are typed into a form:
+		// no part of an answer reaches its statuses or its log.
+		if g, ok := f.(*gitea.Client); ok && cfg.Origin() == config.OriginSettings {
+			g.HideBody = true
+		}
 	}
 	a.forgeNames = forgeNames(cfg.Forges)
 	loc, err := time.LoadLocation(cfg.Site.Timezone)
@@ -308,6 +389,12 @@ func New(cfg config.Config, forges []forge.Forge) (*App, error) {
 	a.reg, a.ideas = readCaches(cfg.DataDir, isSet(cfg.Projects), isSet(cfg.Ideas.File), a.forgeIDs())
 	a.site.Store(a.emptySite(a.now()))
 	return a, nil
+}
+
+// realTicker is a cadence loop's ticker in production.
+func realTicker(_ string, every time.Duration) (<-chan time.Time, func()) {
+	t := time.NewTicker(every)
+	return t.C, t.Stop
 }
 
 func isSet(ref config.FileRef) bool { return ref != config.FileRef{} }
@@ -392,6 +479,7 @@ func (a *App) emptySite(now time.Time) *model.Site {
 		pending = append(pending, model.SourceStatus{Name: name, OK: false, Error: "first read in progress"})
 	}
 	meta := a.metaLocked()
+	meta.FirstRead = meta.Managed
 	for _, p := range a.reg.Projects {
 		meta.FDroid = meta.FDroid || p.FDroid != nil
 	}
@@ -412,14 +500,18 @@ func (a *App) Snapshot() *model.Site { return a.site.Load() }
 
 func (a *App) Subscribe() (<-chan model.Change, func()) { return a.hub.Subscribe() }
 
-// Refresh queues a full cycle, at most one per RefreshInterval; extra calls
-// inside the interval are absorbed (nil, nothing queued).
-func (a *App) Refresh(ctx context.Context) error {
+// Refresh queues a refresh, at most one per RefreshInterval. A call inside
+// the interval is absorbed and says when the last was queued and when the
+// next can be. With refresh: false it queues nothing (model.ErrRefreshOff).
+func (a *App) Refresh(ctx context.Context) (model.Refreshed, error) {
+	if a.cfg.RefreshOff {
+		return model.Refreshed{}, model.ErrRefreshOff
+	}
 	a.mu.Lock()
 	now := a.now()
-	if !a.lastRefresh.IsZero() && now.Sub(a.lastRefresh) < RefreshInterval {
+	if last := a.lastRefresh; !last.IsZero() && now.Sub(last) < RefreshInterval {
 		a.mu.Unlock()
-		return nil
+		return model.Refreshed{Last: last, Next: last.Add(RefreshInterval)}, nil
 	}
 	a.lastRefresh = now
 	a.mu.Unlock()
@@ -427,7 +519,7 @@ func (a *App) Refresh(ctx context.Context) error {
 	case a.refreshCh <- struct{}{}:
 	default:
 	}
-	return nil
+	return model.Refreshed{Queued: true, Last: now, Next: now.Add(RefreshInterval)}, nil
 }
 
 // Cycles is how many assembles have run.
@@ -453,7 +545,7 @@ func (a *App) begin() {
 // RunOnce does one full collection, assembles, saves and returns the site.
 func (a *App) RunOnce(ctx context.Context) (*model.Site, error) {
 	a.begin()
-	a.fullCycle(ctx, true)
+	a.fullCycle(ctx, forcedCycle)
 	a.assemble()
 	if err := a.store.Save(a.now()); err != nil {
 		return nil, fmt.Errorf("save state: %w", err)
@@ -465,37 +557,66 @@ func (a *App) RunOnce(ctx context.Context) (*model.Site, error) {
 // ctx ends, then saves.
 func (a *App) Run(ctx context.Context) error {
 	a.begin()
-	a.fullCycle(ctx, false)
+	a.fullCycle(ctx, startCycle)
 	a.assemble()
 	var wg sync.WaitGroup
-	loop := func(every time.Duration, fn func(context.Context)) {
+	// loop runs fn on each tick of the named ticker, the first after delay,
+	// until ctx ends.
+	loop := func(name string, every, delay time.Duration, fn func(context.Context)) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			t := time.NewTicker(every)
-			defer t.Stop()
+			if delay > 0 {
+				t := time.NewTimer(delay)
+				select {
+				case <-ctx.Done():
+					t.Stop()
+					return
+				case <-t.C:
+				}
+			}
+			c, stop := a.ticker(name, every)
+			defer stop()
 			for {
 				select {
 				case <-ctx.Done():
 					return
-				case <-t.C:
+				case <-c:
 					fn(ctx)
 				}
 			}
 		}()
 	}
-	loop(RepoListEvery, func(ctx context.Context) { a.collectForges(ctx, false) })
-	loop(HeatmapEvery, a.collectHeatmap)
-	loop(FiledEvery, a.collectFiled)
-	loop(DockerEvery, a.collectDocker)
-	loop(ProbeEvery, a.collectProbes)
-	loop(NotesEvery, a.collectNotes)
-	loop(FDroidEvery, a.collectFDroid)
-	loop(MirrorEvery, a.collectMirrors)
-	loop(MirrorRetryEvery, a.retryMirrors)
+	// Each forge on its own minute: one that hangs holds only itself.
+	for i, fs := range a.forges {
+		loop("forge "+fs.cfg.ID, RepoListEvery, a.forgeDelay(i), func(ctx context.Context) { a.forgePass(ctx, fs) })
+	}
+	if a.cfg.Projects.File != "" || a.cfg.Ideas.File.File != "" {
+		// A local file has no forge pass to read it.
+		loop("files", RepoListEvery, 0, func(ctx context.Context) { a.reloadRegistry(ctx, false) })
+	}
+	loop("heatmap", HeatmapEvery, 0, a.collectHeatmap)
+	loop("filed", FiledEvery, 0, a.collectFiled)
+	loop("docker", DockerEvery, 0, a.collectDocker)
+	loop("probes", ProbeEvery, 0, a.collectProbes)
+	loop("notes", NotesEvery, 0, a.collectNotes)
+	loop("fdroid", FDroidEvery, 0, a.collectFDroid)
+	loop("mirrors", MirrorEvery, 0, a.collectMirrors)
+	loop("mirror retry", MirrorRetryEvery, 0, a.retryMirrors)
 
-	wg.Add(3)
+	wg.Add(4)
 	go func() { defer wg.Done(); a.assembler(ctx) }()
+	go func() { // a reload named an F-Droid package the last read left out
+		defer wg.Done()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-a.fdroidCh:
+				a.catchUpFDroid(ctx)
+			}
+		}
+	}()
 	go func() {
 		defer wg.Done()
 		t := time.NewTicker(SaveEvery)
@@ -516,8 +637,7 @@ func (a *App) Run(ctx context.Context) error {
 			case <-ctx.Done():
 				return
 			case <-a.refreshCh:
-				a.fullCycle(ctx, true)
-				a.kickAssemble()
+				a.refresh(ctx)
 			}
 		}
 	}()
@@ -525,6 +645,13 @@ func (a *App) Run(ctx context.Context) error {
 	a.flush()
 	log.Printf("collectors stopped after %d assembles; state saved", a.cycles.Load())
 	return nil
+}
+
+// refresh is one refresh (POST /api/refresh): an early run of the usual
+// rules (refreshCycle).
+func (a *App) refresh(ctx context.Context) {
+	a.fullCycle(ctx, refreshCycle)
+	a.kickAssemble()
 }
 
 // save is the SaveEvery tick: it writes state.json when events or
@@ -566,15 +693,35 @@ func (a *App) assembler(ctx context.Context) {
 	}
 }
 
-// fullCycle runs the repo lists (and the projects files) first, then
-// everything else in parallel, and returns when all are done.
-func (a *App) fullCycle(ctx context.Context, force bool) {
-	a.collectRepos(ctx, force)
+// cycleKind says why a full cycle runs.
+type cycleKind int
+
+const (
+	// startCycle is Run's first: every source; the projects and ideas
+	// files are read when their marks say they may have changed.
+	startCycle cycleKind = iota
+	// forcedCycle is RunOnce's: every source, the files read whatever
+	// their marks say.
+	forcedCycle
+	// refreshCycle is a refresh's: the files read whatever their marks
+	// say, and the sources with their own cadence only when due
+	// (dueSources).
+	refreshCycle
+)
+
+// fullCycle runs the repo lists (and the projects files) first, then the
+// detail they call for beside the other sources, and returns when all are
+// done. Detail is read where a list moved or a read failed, whatever kind.
+func (a *App) fullCycle(ctx context.Context, kind cycleKind) {
+	a.collectRepos(ctx, kind != startCycle)
+	fns := []func(context.Context){a.collectDetails, a.collectDocker, a.collectNotes}
+	if kind == refreshCycle {
+		fns = append(fns, a.dueSources()...)
+	} else {
+		fns = append(fns, a.collectHeatmap, a.collectFiled, a.collectProbes, a.collectFDroid, a.collectMirrors)
+	}
 	var wg sync.WaitGroup
-	for _, fn := range []func(context.Context){
-		func(ctx context.Context) { a.collectDetails(ctx, force) },
-		a.collectHeatmap, a.collectFiled, a.collectDocker, a.collectProbes, a.collectNotes, a.collectFDroid, a.collectMirrors,
-	} {
+	for _, fn := range fns {
 		wg.Add(1)
 		go func(fn func(context.Context)) {
 			defer wg.Done()
@@ -582,13 +729,6 @@ func (a *App) fullCycle(ctx context.Context, force bool) {
 		}(fn)
 	}
 	wg.Wait()
-}
-
-// collectForges is the repo-list cadence: every forge's list, then the
-// detail it calls for.
-func (a *App) collectForges(ctx context.Context, force bool) {
-	a.collectRepos(ctx, force)
-	a.collectDetails(ctx, force)
 }
 
 // setStatus records a source result; err == nil marks it fresh at refreshed.
@@ -649,13 +789,20 @@ func (a *App) forgeStatusLocked(fs *forgeState) {
 	case a.limitedLocked(fs):
 		err, refreshed = limitShown(fs), time.Time{}
 	case fs.listErr != nil:
-		err, refreshed = fmt.Errorf("repo list: %w (showing the last good data)", fs.listErr), time.Time{}
+		err, refreshed = errors.New(a.listShownLocked(fs)), time.Time{}
 	case namedErr != nil || fs.detailErr != nil:
 		err, refreshed = errors.New(strings.Join(parts, "; ")), fs.listedAt
 	case mirrorErr != nil:
 		err, refreshed = mirrorErr, time.Time{}
 	}
-	a.setStatusNoteLocked(fs.cfg.ID, err, a.noTokenNoteLocked(fs), refreshed)
+	// The no-token note, then the page cap's, then why the list kept nothing.
+	var notes []string
+	for _, n := range []string{a.noTokenNoteLocked(fs), fs.capNote, fs.emptyNote} {
+		if n != "" {
+			notes = append(notes, n)
+		}
+	}
+	a.setStatusNoteLocked(fs.cfg.ID, err, strings.Join(notes, ". "), refreshed)
 }
 
 // needsTokenLocked reports whether err is forge.ErrNeedsToken. The first time
@@ -896,51 +1043,80 @@ func (a *App) mirrorRefLocked(p registry.Project) (ref registry.RepoRef, isPrima
 	return registry.RepoRef{}, false, false
 }
 
+// collectRepos lists every forge at once (a full cycle's first step), each
+// under its pass lock, so it waits for that forge's pass in flight; then
+// reads the projects and ideas files again when they may have changed (force:
+// whatever their marks say); then every forge's by-name reads at once.
 func (a *App) collectRepos(ctx context.Context, force bool) {
-	// Serialised rather than skipped: a forced call must still force the
-	// projects reload after a ticker call in flight.
-	a.reposMu.Lock()
-	defer a.reposMu.Unlock()
-	failed := map[string]bool{}
-	var failedMu sync.Mutex
+	a.eachForge(func(fs *forgeState) { a.listOne(ctx, fs) })
+	a.kickAssemble()
+	a.reloadRegistry(ctx, force)
+	a.eachForge(func(fs *forgeState) { a.readNamed(ctx, fs) })
+}
+
+// eachForge runs fn for every forge at once, each under its pass lock, and
+// returns when all are done.
+func (a *App) eachForge(fn func(fs *forgeState)) {
 	var wg sync.WaitGroup
 	for _, fs := range a.forges {
-		a.mu.Lock()
-		skip, limited := fs.noToken, a.limitedLocked(fs)
-		a.mu.Unlock()
-		if limited {
-			// As if down: its files and named repos wait for the reset too.
-			failed[fs.cfg.ID] = true
-			continue
-		}
-		if skip {
-			continue
-		}
 		wg.Add(1)
-		go func(fs *forgeState) {
+		go func() {
 			defer wg.Done()
-			if !a.listForge(ctx, fs) {
-				failedMu.Lock()
-				failed[fs.cfg.ID] = true
-				failedMu.Unlock()
-			}
-		}(fs)
+			fs.pass.Lock()
+			defer fs.pass.Unlock()
+			fn(fs)
+		}()
 	}
 	wg.Wait()
+}
+
+// listOne lists one forge, but not one that needs a token for it, nor one
+// waiting for its rate limit (which is down meanwhile: downLocked). The caller
+// holds fs.pass.
+func (a *App) listOne(ctx context.Context, fs *forgeState) {
+	a.mu.Lock()
+	skip := fs.noToken || a.limitedLocked(fs)
+	a.mu.Unlock()
+	if !skip {
+		a.listForge(ctx, fs)
+	}
+}
+
+// downLocked reports whether a forge is down for what it holds (the projects
+// and ideas files, its by-name reads): its last list failed, or it waits for
+// its rate limit.
+func (a *App) downLocked(fs *forgeState) bool { return fs.listErr != nil || a.limitedLocked(fs) }
+
+// forgePass is one tick of a forge's loop: its list, the projects and ideas
+// files when it holds one, its by-name reads, then the detail its list calls
+// for. It holds fs.pass throughout and never waits for another forge.
+func (a *App) forgePass(ctx context.Context, fs *forgeState) {
+	fs.pass.Lock()
+	defer fs.pass.Unlock()
+	a.listOne(ctx, fs)
 	a.kickAssemble()
-	a.reloadRegistry(ctx, force, failed)
-	a.readNamed(ctx, failed)
+	if id := fs.cfg.ID; a.cfg.Projects.Forge == id || a.cfg.Ideas.File.Forge == id {
+		a.reloadRegistry(ctx, false)
+	}
+	a.readNamed(ctx, fs)
+	a.readDetails(ctx, fs)
 }
 
 // reloadRegistry reads the projects and ideas files again when they may have
-// changed. A forge whose list just failed is down: the files it holds are not
-// read this time (the cached or current copy stays).
-func (a *App) reloadRegistry(ctx context.Context, force bool, failed map[string]bool) {
+// changed (force: whatever their marks say), one load at a time. A forge that
+// is down (downLocked) holds back the files on it: the cached or current copy
+// stays.
+func (a *App) reloadRegistry(ctx context.Context, force bool) {
+	a.regMu.Lock()
+	defer a.regMu.Unlock()
+	a.mu.Lock()
 	for _, ref := range []config.FileRef{a.cfg.Projects, a.cfg.Ideas.File} {
-		if ref.Forge != "" && failed[ref.Forge] {
+		if fs := a.byID[ref.Forge]; fs != nil && a.downLocked(fs) {
+			a.mu.Unlock()
 			return
 		}
 	}
+	a.mu.Unlock()
 	pm, pk := a.fileMark(a.cfg.Projects)
 	im, ik := a.fileMark(a.cfg.Ideas.File)
 	mark, known := pm+"|"+im, pk && ik
@@ -950,13 +1126,24 @@ func (a *App) reloadRegistry(ctx context.Context, force bool, failed map[string]
 	a.mu.Unlock()
 	if reload {
 		a.loadRegistry(ctx, mark, known)
+		if a.fdroidBehind() {
+			a.kickFDroid()
+		}
 	}
 }
 
 // listForge reads one forge's repo list, and the token's user until known.
-// It reports false when the list failed.
-func (a *App) listForge(ctx context.Context, fs *forgeState) bool {
+func (a *App) listForge(ctx context.Context, fs *forgeState) {
 	repos, err := fs.f.ListRepos(ctx, fs.cfg.Owners)
+	// A list cut at the client's page cap is a good list, with a note.
+	var capped *forge.ListCapped
+	if errors.As(err, &capped) {
+		err = nil
+	}
+	others := false
+	if seer, ok := fs.f.(forge.OthersSeer); ok && err == nil {
+		others = seer.OthersSeen()
+	}
 	a.mu.Lock()
 	needMe := fs.me == ""
 	a.mu.Unlock()
@@ -971,6 +1158,13 @@ func (a *App) listForge(ctx context.Context, fs *forgeState) bool {
 	switch {
 	case a.needsTokenLocked(fs, err):
 	case err != nil:
+		// The page gets words (listShownLocked); the log gets the error
+		// itself, with its HTTP status, once per change. A spent rate
+		// limit is logged by its status line.
+		if _, limited := forge.RateLimited(err); !limited && err.Error() != fs.listLogged {
+			fs.listLogged = err.Error()
+			log.Printf("forge %s: repo list: %s", fs.cfg.ID, fs.listLogged)
+		}
 		fs.listErr = a.limitHitLocked(fs, err)
 	default:
 		// Before the private filter: an owner whose repos are all private
@@ -980,20 +1174,34 @@ func (a *App) listForge(ctx context.Context, fs *forgeState) bool {
 				owner, _, _ := strings.Cut(r.FullName, "/")
 				return strings.EqualFold(owner, o)
 			}) {
-				a.warnOnce("forge " + fs.cfg.ID + ": owner " + o + " has no repos the token can see (is the name right?)")
+				a.warnOnce("forge " + fs.cfg.ID + ": owner " + o + " has no repos the token can see, or no such owner")
 			}
 		}
 		sort.SliceStable(repos, func(i, j int) bool { return strings.ToLower(repos[i].FullName) < strings.ToLower(repos[j].FullName) })
 		dropped := map[string]bool{}
 		kept := repos[:0]
+		private, forks := 0, 0
 		for _, r := range repos {
 			if r.Private && !a.cfg.IncludePrivate {
 				dropped[repoKey(fs.cfg.ID, r.FullName)] = true
+				private++
+				continue
+			}
+			// A fork is tracked only with forks on, or when the projects
+			// file names it (one this list leaves out before the file's
+			// first read is read by name: readNamed).
+			if r.Fork && !fs.cfg.Forks && !a.reg.Names(fs.cfg.ID, r.FullName) {
+				forks++
 				continue
 			}
 			kept = append(kept, r)
 		}
 		fs.listing, fs.dropped, fs.listedAt, fs.listErr = kept, dropped, now, nil
+		fs.capNote = ""
+		if capped != nil {
+			fs.capNote = capped.Error()
+			a.noteOnce("forge " + fs.cfg.ID + ": " + fs.capNote)
+		}
 		fs.repos = withNamed(kept, fs.named)
 		switch {
 		case a.rateLimitLocked(fs, meErr):
@@ -1002,91 +1210,84 @@ func (a *App) listForge(ctx context.Context, fs *forgeState) bool {
 		case me.Login != "":
 			fs.me = me.Login
 		}
+		fs.listLogged = ""
+		fs.emptyNote = a.emptyNoteLocked(fs, len(repos), private, forks, others)
 	}
 	a.forgeStatusLocked(fs)
-	return err == nil || fs.noToken
 }
 
-// readNamed reads by name every repo the projects file names that its
-// forge's list lacks (an owner outside owners), as v0.1 read any repo the
-// file named; include_private still applies. A failed read keeps the last
-// good copy and is named in the forge's status. A forge that needs a token,
-// or whose list just failed, is left as it is.
-func (a *App) readNamed(ctx context.Context, failed map[string]bool) {
+// readNamed reads by name every repo the projects file names on fs that its
+// list lacks (an owner outside owners), as v0.1 read any repo the file named;
+// include_private still applies. A failed read keeps the last good copy and
+// is named in the forge's status. A forge that needs a token, has not listed
+// yet, or is down (downLocked) is left as it is. The caller holds fs.pass.
+func (a *App) readNamed(ctx context.Context, fs *forgeState) {
+	id := fs.cfg.ID
 	a.mu.Lock()
-	want := map[string][]string{} // forge id -> full names; present = read this pass
-	for _, fs := range a.forges {
-		id := fs.cfg.ID
-		if fs.noToken || failed[id] || fs.listedAt.IsZero() {
-			continue
-		}
-		listed := map[string]bool{}
-		for _, r := range fs.listing {
-			listed[repoKey(id, r.FullName)] = true
-		}
-		want[id] = nil
-		seen := map[string]bool{}
-		for _, p := range a.reg.Projects {
-			for _, ref := range p.Repos {
-				key := repoKey(ref.Forge, ref.FullName)
-				if ref.Forge == id && !listed[key] && !fs.dropped[key] && !seen[key] {
-					seen[key] = true
-					want[id] = append(want[id], ref.FullName)
-				}
+	if fs.noToken || fs.listedAt.IsZero() || a.downLocked(fs) {
+		a.mu.Unlock()
+		return
+	}
+	listed := map[string]bool{}
+	for _, r := range fs.listing {
+		listed[repoKey(id, r.FullName)] = true
+	}
+	var names []string
+	seen := map[string]bool{}
+	for _, p := range a.reg.Projects {
+		for _, ref := range p.Repos {
+			key := repoKey(ref.Forge, ref.FullName)
+			if ref.Forge == id && !listed[key] && !fs.dropped[key] && !seen[key] {
+				seen[key] = true
+				names = append(names, ref.FullName)
 			}
 		}
 	}
 	a.mu.Unlock()
-	for _, fs := range a.forges {
-		names, ok := want[fs.cfg.ID]
-		if !ok {
+	named, dropped := map[string]forge.Repo{}, map[string]bool{}
+	var failed []repoFailure
+	var limit error // once the forge says its rate limit is spent, nothing more is asked
+	for _, full := range names {
+		key := repoKey(id, full)
+		var r forge.Repo
+		err := limit
+		if err == nil {
+			if r, err = fs.f.Repo(ctx, full); err != nil {
+				a.mu.Lock()
+				if a.rateLimitLocked(fs, err) {
+					err = limitShown(fs)
+					limit = err
+				}
+				a.mu.Unlock()
+			}
+		}
+		if err != nil {
+			failed = append(failed, repoFailure{key, namedProblem(fs.f, full, err)})
 			continue
 		}
-		named, dropped := map[string]forge.Repo{}, map[string]bool{}
-		var failed []repoFailure
-		var limit error // once the forge says its rate limit is spent, nothing more is asked
-		for _, full := range names {
-			key := repoKey(fs.cfg.ID, full)
-			var r forge.Repo
-			err := limit
-			if err == nil {
-				if r, err = fs.f.Repo(ctx, full); err != nil {
-					a.mu.Lock()
-					if a.rateLimitLocked(fs, err) {
-						err = limitShown(fs)
-						limit = err
-					}
-					a.mu.Unlock()
-				}
-			}
-			if err != nil {
-				failed = append(failed, repoFailure{key, namedProblem(fs.f, full, err)})
-				continue
-			}
-			if r.Private && !a.cfg.IncludePrivate {
-				dropped[key] = true
-				continue
-			}
-			named[key] = r
+		if r.Private && !a.cfg.IncludePrivate {
+			dropped[key] = true
+			continue
 		}
-		a.mu.Lock()
-		// A failed read keeps what was known, as of now: the last good copy,
-		// or that the repo is private (which a mirror view may have learnt
-		// during this pass), and private wins.
-		for _, nf := range failed {
-			if dropped[nf.key] = fs.namedDropped[nf.key]; !dropped[nf.key] {
-				if last, ok := fs.named[nf.key]; ok {
-					named[nf.key] = last
-				}
+		named[key] = r
+	}
+	a.mu.Lock()
+	// A failed read keeps what was known, as of now: the last good copy, or
+	// that the repo is private (which a mirror view may have learnt during
+	// this pass), and private wins.
+	for _, nf := range failed {
+		if dropped[nf.key] = fs.namedDropped[nf.key]; !dropped[nf.key] {
+			if last, ok := fs.named[nf.key]; ok {
+				named[nf.key] = last
 			}
 		}
-		fs.named, fs.namedDropped, fs.namedFailed = named, dropped, failed
-		fs.repos = withNamed(fs.listing, named)
-		a.forgeStatusLocked(fs)
-		a.mu.Unlock()
-		if len(names) > 0 {
-			a.kickAssemble()
-		}
+	}
+	fs.named, fs.namedDropped, fs.namedFailed = named, dropped, failed
+	fs.repos = withNamed(fs.listing, named)
+	a.forgeStatusLocked(fs)
+	a.mu.Unlock()
+	if len(names) > 0 {
+		a.kickAssemble()
 	}
 }
 
@@ -1271,87 +1472,140 @@ func (a *App) fullReposLocked() []fullRepo {
 type detailJob struct {
 	fullRepo
 	detail, files bool
+	// runsOnly: the detail's one reason is a run in progress (GitHub), so
+	// its runs are read alone (readRuns).
+	runsOnly bool
+	// failing: the repo's last read failed, so it goes after the others.
+	failing bool
 }
 
-// collectDetails refreshes repo detail when the listing shows a change, a run
-// is in progress, or it is 30 min old; files when updated_at moved or 6 h.
-// Each forge reads its own repos. force (a forced refresh) reads every
-// detail again on a Gitea forge, as 0.1.0 did; on GitHub, whose rate limit
-// is shared and punitive, it adds nothing: the listing it re-reads already
-// shows what moved (pushed_at or updated_at), and a failed read is retried.
-func (a *App) collectDetails(ctx context.Context, force bool) {
-	a.detailMu.Lock()
-	defer a.detailMu.Unlock()
+// ageDue reports whether data read at fetched is due again at now for its
+// age alone: at maxAge at the latest, and after three quarters of maxAge on
+// the tick of the key's own slot. A slot is one RepoListEvery and there are
+// maxAge/4 of them, so the repos one pass read come due spread over the last
+// quarter, and stay spread: each comes back on its own slot every time. (A
+// fixed max age per key gives each repo its own period, and the phases drift
+// back into bursts.) Nothing waits longer than maxAge.
+func ageDue(key string, fetched, now time.Time, maxAge time.Duration) bool {
+	age := now.Sub(fetched)
+	if age >= maxAge {
+		return true
+	}
+	tick := int64(RepoListEvery / time.Second)
+	slots := int64(maxAge / 4 / RepoListEvery)
+	if tick < 1 || slots < 2 || age <= maxAge-maxAge/4 {
+		return false
+	}
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(key))
+	return now.Unix()/tick%slots == int64(h.Sum32())%slots
+}
+
+// collectDetails is every forge's detail at once (a full cycle's step), each
+// under its pass lock.
+func (a *App) collectDetails(ctx context.Context) {
+	a.eachForge(func(fs *forgeState) { a.readDetails(ctx, fs) })
+}
+
+// readDetails refreshes the detail of fs's repos when the listing shows a
+// change, a run is in progress, or its age is due (ageDue, by 30 min); files
+// when updated_at moved or their age is due (by 6 h). A refresh adds nothing
+// here, on any forge: the lists it reads again already show what moved, and
+// a failed read is tried again. The caller holds fs.pass.
+func (a *App) readDetails(ctx context.Context, fs *forgeState) {
 	now := a.now()
 	a.mu.Lock()
-	jobs := map[*forgeState][]detailJob{}
+	var jobs []detailJob
+	// Repos whose last read failed go after the others: a read that fails
+	// stops the forge's pass (runDetailJob), and one repo that keeps failing
+	// must not keep the rest from being read.
+	var failedLast []detailJob
+	if !a.limitedLocked(fs) {
+		for _, fr := range a.fullReposLocked() {
+			if fr.fs != fs {
+				continue
+			}
+			st := a.repoSt[fr.key]
+			if st == nil {
+				st = &repoState{}
+				a.repoSt[fr.key] = st
+			}
+			r, d := fr.repo, st.detail
+			j := detailJob{fullRepo: fr}
+			due := d == nil || st.detailErr != nil || !r.UpdatedAt.Equal(st.seenUpdated) ||
+				r.OpenIssues != st.seenIssues || r.OpenPRs != st.seenPRs || ageDue(fr.key, d.FetchedAt, now, DetailMaxAge)
+			running := d != nil && d.InProgress()
+			j.detail = due || running
+			// On GitHub, where each full read is charged, a run in progress
+			// alone (nothing moved, nothing due) is read with its runs only.
+			j.runsOnly = running && !due && fs.cfg.Type == "github"
+			j.files = st.files == nil || st.filesErr != nil || !r.UpdatedAt.Equal(st.filesUpdated) || ageDue(fr.key, st.files.FetchedAt, now, FilesMaxAge)
+			switch {
+			case !j.detail && !j.files:
+			case st.detailErr != nil || st.filesErr != nil:
+				j.failing = true
+				failedLast = append(failedLast, j)
+			default:
+				jobs = append(jobs, j)
+			}
+		}
+	}
+	jobs = append(jobs, failedLast...)
+	a.mu.Unlock()
+	changed := atomic.Bool{}
+	pass := &detailPass{} // this forge's breaker for this pass
+	if len(jobs) > 0 {
+		a.runDetailJobs(ctx, jobs, now, &changed, pass)
+	}
+	a.mu.Lock()
+	failed, wanted := 0, 0
+	var first error
 	for _, fr := range a.fullReposLocked() {
-		if a.limitedLocked(fr.fs) {
+		if fr.fs != fs {
 			continue
 		}
-		st := a.repoSt[fr.key]
-		if st == nil {
-			st = &repoState{}
-			a.repoSt[fr.key] = st
-		}
-		r, d := fr.repo, st.detail
-		j := detailJob{fullRepo: fr}
-		forced := force && fr.fs.cfg.Type != "github"
-		j.detail = forced || d == nil || st.detailErr != nil || !r.UpdatedAt.Equal(st.seenUpdated) ||
-			r.OpenIssues != st.seenIssues || r.OpenPRs != st.seenPRs || d.InProgress() || now.Sub(d.FetchedAt) >= DetailMaxAge
-		j.files = st.files == nil || st.filesErr != nil || !r.UpdatedAt.Equal(st.filesUpdated) || now.Sub(st.files.FetchedAt) >= FilesMaxAge
-		if j.detail || j.files {
-			jobs[fr.fs] = append(jobs[fr.fs], j)
-		}
-	}
-	a.mu.Unlock()
-
-	changed := atomic.Bool{}
-	var wg sync.WaitGroup
-	for _, js := range jobs {
-		wg.Add(1)
-		go func(js []detailJob) {
-			defer wg.Done()
-			a.runDetailJobs(ctx, js, now, &changed)
-		}(js)
-	}
-	wg.Wait()
-
-	a.mu.Lock()
-	type tally struct {
-		failed, wanted int
-		first          error
-	}
-	tallies := map[*forgeState]*tally{}
-	for _, fr := range a.fullReposLocked() {
-		t := tallies[fr.fs]
-		if t == nil {
-			t = &tally{}
-			tallies[fr.fs] = t
-		}
-		t.wanted++
+		wanted++
 		st := a.repoSt[fr.key]
 		if st == nil {
 			continue
 		}
 		for _, e := range []error{st.detailErr, st.filesErr} {
 			if e != nil {
-				t.failed++
-				if t.first == nil {
-					t.first = e
+				failed++
+				if first == nil {
+					first = e
 				}
 				break
 			}
 		}
 	}
-	for _, fs := range a.forges {
-		fs.detailErr = nil
-		if t := tallies[fs]; t != nil && t.first != nil {
-			fs.detailErr = fmt.Errorf("%d of %d repos could not be read (showing their last good data); first: %v", t.failed, t.wanted, t.first)
+	switch {
+	case pass.answered.Load():
+		fs.answering = true
+	case pass.fresh.Load():
+		fs.answering = false
+	}
+	fs.detailErr = nil
+	// A forge that answers (fs.answering) is up: one repo that keeps failing
+	// stops the pass, but the status names its failure.
+	switch {
+	case pass.stopped.Load() && (!fs.answering || first == nil):
+		n, what := pass.notRead.Load(), "repos"
+		if n == 1 {
+			what = "repo"
 		}
-		if fs.known() {
-			a.forgeStatusLocked(fs)
+		fs.detailErr = fmt.Errorf("%s not answering; %d %s not read this pass", a.forgeNames[fs.cfg.ID], n, what)
+	case first != nil:
+		// The repos the stop left unread hold no failure, so the count of
+		// those that could not be read leaves them out: they are named apart.
+		var more string
+		if n := pass.skipped.Load(); n > 0 {
+			more = fmt.Sprintf("; %d more not read this pass", n)
 		}
+		fs.detailErr = fmt.Errorf("%d of %d repos could not be read (showing their last good data)%s; first: %v", failed, wanted, more, first)
+	}
+	if fs.known() {
+		a.forgeStatusLocked(fs)
 	}
 	a.mu.Unlock()
 	if changed.Load() {
@@ -1359,8 +1613,39 @@ func (a *App) collectDetails(ctx context.Context, force bool) {
 	}
 }
 
+// detailPass is one forge's share of a detail pass. Once a read of it times
+// out, or still fails fast after its retries (notAnswering), the forge is
+// taken to be down: its jobs not started yet are skipped (their repos keep
+// their last good data) until the next pass, which tries again. The reads
+// already under way end as they do, so a pass costs at most ForgeWorkers
+// failed reads. notRead counts the jobs failed that way or skipped, skipped
+// the skipped jobs of repos whose last read had not failed; answered is set
+// by any read of the pass that succeeded, fresh by a stop on a repo whose
+// last read had not failed (see forgeState.answering).
+type detailPass struct {
+	stopped  atomic.Bool
+	notRead  atomic.Int32
+	skipped  atomic.Int32
+	answered atomic.Bool
+	fresh    atomic.Bool
+}
+
+func (p *detailPass) stop(j detailJob) {
+	p.stopped.Store(true)
+	p.notRead.Add(1)
+	if !j.failing {
+		p.fresh.Store(true)
+	}
+}
+
+// notAnswering reports whether a failed read says its forge is down: it
+// timed out (a hung forge), or failed fast through every retry (a stopped
+// server behind a proxy answers 502, a stopped host refuses). Each would
+// cost the same again for every other repo of the pass.
+func notAnswering(err error) bool { return forge.Timeout(err) || forge.FailedFast(err) }
+
 // runDetailJobs runs one forge's jobs, ForgeWorkers at a time.
-func (a *App) runDetailJobs(ctx context.Context, jobs []detailJob, now time.Time, changed *atomic.Bool) {
+func (a *App) runDetailJobs(ctx context.Context, jobs []detailJob, now time.Time, changed *atomic.Bool, pass *detailPass) {
 	ch := make(chan detailJob)
 	var wg sync.WaitGroup
 	for w := 0; w < ForgeWorkers; w++ {
@@ -1368,7 +1653,7 @@ func (a *App) runDetailJobs(ctx context.Context, jobs []detailJob, now time.Time
 		go func() {
 			defer wg.Done()
 			for j := range ch {
-				a.runDetailJob(ctx, j, now, changed)
+				a.runDetailJob(ctx, j, now, changed, pass)
 			}
 		}()
 	}
@@ -1383,24 +1668,46 @@ func (a *App) runDetailJobs(ctx context.Context, jobs []detailJob, now time.Time
 }
 
 // A job the forge's rate limit stops (met by another job) is not run: the
-// repo keeps its last good detail and files.
-func (a *App) runDetailJob(ctx context.Context, j detailJob, now time.Time, changed *atomic.Bool) {
-	if limited, _ := a.limitState(j.fs); j.detail && !limited {
-		d, err := j.fs.f.FetchDetail(ctx, j.repo, now.Add(-CommitWindow), CommitPages, now)
-		a.mu.Lock()
-		st := a.repoSt[j.key]
-		if a.needsTokenLocked(j.fs, err) {
-			err = nil
+// repo keeps its last good detail and files. Nor is one after a read of the
+// forge said this pass that it is not answering (pass.stop).
+func (a *App) runDetailJob(ctx context.Context, j detailJob, now time.Time, changed *atomic.Bool, pass *detailPass) {
+	if pass.stopped.Load() {
+		pass.notRead.Add(1)
+		if !j.failing {
+			pass.skipped.Add(1)
 		}
-		st.detailErr = a.limitHitLocked(j.fs, err)
-		if err == nil && d != nil {
-			st.detail = d
-			st.seenUpdated, st.seenIssues, st.seenPRs = j.repo.UpdatedAt.Time, j.repo.OpenIssues, j.repo.OpenPRs
-			changed.Store(true)
-		}
-		a.mu.Unlock()
+		return
 	}
-	if limited, _ := a.limitState(j.fs); j.files && !limited {
+	if limited, _ := a.limitState(j.fs); j.detail && !limited {
+		done, err := false, error(nil)
+		if j.runsOnly {
+			done, err = a.readRuns(ctx, j, changed)
+		}
+		if !done {
+			var d *forge.Detail
+			d, err = j.fs.f.FetchDetail(ctx, j.repo, now.Add(-CommitWindow), CommitPages, now)
+			a.mu.Lock()
+			st := a.repoSt[j.key]
+			if a.needsTokenLocked(j.fs, err) {
+				err = nil
+			}
+			st.detailErr = a.limitHitLocked(j.fs, err)
+			if err == nil && d != nil {
+				st.detail = d
+				st.seenUpdated, st.seenIssues, st.seenPRs = j.repo.UpdatedAt.Time, j.repo.OpenIssues, j.repo.OpenPRs
+				changed.Store(true)
+			}
+			a.mu.Unlock()
+		}
+		if err == nil {
+			pass.answered.Store(true)
+		}
+		if notAnswering(err) {
+			pass.stop(j)
+			return
+		}
+	}
+	if limited, _ := a.limitState(j.fs); j.files && !limited && !pass.stopped.Load() {
 		f, err := j.fs.f.FetchFiles(ctx, j.repo, j.planDirs, now)
 		a.mu.Lock()
 		st := a.repoSt[j.key]
@@ -1414,5 +1721,43 @@ func (a *App) runDetailJob(ctx context.Context, j detailJob, now time.Time, chan
 			changed.Store(true)
 		}
 		a.mu.Unlock()
+		if err == nil {
+			pass.answered.Store(true)
+		}
+		if notAnswering(err) {
+			pass.stop(j)
+		}
 	}
+}
+
+// runsReader is a forge that reads a repo's newest runs alone.
+type runsReader interface {
+	Runs(ctx context.Context, full string) ([]forge.Run, error)
+}
+
+// readRuns reads only the runs of a repo whose one reason to be read is a run
+// in progress, into a copy of its last detail (FetchedAt kept, so its age
+// still counts from the last full read). done is true when that was the
+// whole job: the read failed (the next pass reads it all) or a run is still
+// in progress. When every run has finished, done is false and the caller
+// reads the whole detail at once: the run may have made a release. A forge
+// that cannot read runs alone gives false too.
+func (a *App) readRuns(ctx context.Context, j detailJob, changed *atomic.Bool) (done bool, err error) {
+	rr, ok := j.fs.f.(runsReader)
+	if !ok {
+		return false, nil
+	}
+	runs, err := rr.Runs(ctx, j.repo.FullName)
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	st := a.repoSt[j.key]
+	if err != nil {
+		st.detailErr = a.limitHitLocked(j.fs, err)
+		return true, err
+	}
+	d := *st.detail
+	d.Runs = runs
+	st.detail = &d
+	changed.Store(true)
+	return d.InProgress(), nil
 }

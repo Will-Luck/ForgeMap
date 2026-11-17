@@ -15,7 +15,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/Will-Luck/waymark/internal/forge"
+	"github.com/Will-Luck/forgemap/internal/forge"
 )
 
 // UnsortedKey is the category of every repo the projects file does not mention.
@@ -193,6 +193,21 @@ func (r *Registry) Hidden(name string) bool {
 	for _, h := range r.HideRepos {
 		if strings.EqualFold(h, name) {
 			return true
+		}
+	}
+	return false
+}
+
+// Names reports whether a project's repos: list names the repo full on forge
+// forgeID (any case): such a repo is tracked whatever the forge's list does
+// with it (a fork, with forks off).
+func (r *Registry) Names(forgeID, full string) bool {
+	k := refKey(forgeID, full)
+	for _, p := range r.Projects {
+		for _, ref := range p.Repos {
+			if refKey(ref.Forge, ref.FullName) == k {
+				return true
+			}
 		}
 	}
 	return false

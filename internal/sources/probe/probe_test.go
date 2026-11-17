@@ -59,7 +59,7 @@ func TestCheckUserAgent(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { got <- r.UserAgent() }))
 	defer srv.Close()
 	Check(context.Background(), NewClient(), srv.URL+"/", "1.2.3")
-	if ua := <-got; ua != "waymark-probe/1.2.3" {
+	if ua := <-got; ua != "ForgeMap-probe/1.2.3" {
 		t.Errorf("User-Agent = %q", ua)
 	}
 }

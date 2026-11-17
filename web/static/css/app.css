@@ -1,4 +1,4 @@
-/* Waymark: "observatory at night". Own tokens, Lucide-geometry stroke icons,
+/* ForgeMap: "observatory at night". Own tokens, Lucide-geometry stroke icons,
    no elevation shadows. Per-snapshot rules (category hues, board filters,
    view-transition names, --pv values) come from /dyn/{hash}/site.css. */
 
@@ -126,7 +126,6 @@
   .k-bold { --kc: var(--k-bold); }
   .k-connective { --kc: var(--k-conn); }
   .k-hardening { --kc: var(--k-hard); }
-  .k-filed { --kc: var(--good); }
 }
 
 /* ----------------------------------------------------------------- base */
@@ -139,8 +138,17 @@
     font-family: var(--font);
     font-size: 106.25%; /* 17px */
     line-height: 1.6;
-    scroll-padding-top: calc(var(--head-h) + 1rem);
+    /* --head-seen: the header's measured height (head.js); without it, --head-h. */
+    scroll-padding-top: calc(var(--head-seen, var(--head-h)) + 1rem);
     -webkit-font-smoothing: antialiased;
+  }
+  /* The signed-in owner's header also holds Settings, so it wraps: two rows
+     from 760px, three below (91px and 147px measured, more than --head-h).
+     Without JavaScript a link to a place on the page still lands below it;
+     the header itself keeps its size. */
+  html:has(.head-settings) { scroll-padding-top: calc(var(--head-seen, 5.4rem) + 1rem); }
+  @media (width < 760px) {
+    html:has(.head-settings) { scroll-padding-top: calc(var(--head-seen, 8.7rem) + 1rem); }
   }
   body {
     min-block-size: 100dvh;
@@ -528,6 +536,8 @@
   .chev { color: var(--muted); transition: rotate 0.25s var(--ease); }
   details[open] > summary .chev { rotate: 180deg; }
   details[open] > summary .i-chevron-right, .why[open] > summary .chev { rotate: 90deg; }
+  /* A summary that names both actions shows the one a tap would do. */
+  details[open] > summary .when-closed, details:not([open]) > summary .when-open { display: none; }
   @supports selector(::details-content) {
     details::details-content {
       block-size: 0;
@@ -573,6 +583,8 @@
   .wk.l3 { fill: color-mix(in oklch, var(--accent) 75%, var(--raised)); }
   .wk.l4 { fill: var(--accent); }
   .weeks-link:hover .wk { fill: color-mix(in oklch, var(--accent) 85%, var(--raised)); }
+  .weeks-cap { margin-block-start: 0.35rem; color: var(--muted); font-size: 0.85rem; }
+  .weeks-cap b { color: var(--text); }
 
   /* Needs you */
   .needs-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 19rem), 1fr)); gap: 0.75rem; }
@@ -710,6 +722,9 @@
   .spark.flat .spark-line { stroke: var(--border); }
   .spark.flat .spark-area { fill: none; }
   .when { color: var(--muted); font-size: 0.8rem; white-space: nowrap; margin-inline-start: auto; }
+  /* "103 commits in 12 weeks, last 16 hours ago" may break at its comma. */
+  .when:has(.nw) { white-space: normal; text-align: end; }
+  .when .nw { white-space: nowrap; }
   @container (width < 23rem) {
     .card { grid-template-columns: auto minmax(0, 1fr); grid-template-areas: "tile title" "tile pill" "sum sum" "chips chips" "foot foot"; }
     .card > .tp { justify-self: start; }
@@ -790,13 +805,19 @@
   .arc-num small { font-size: 0.75em; }
   .probe.down .arc { --ac: var(--alert); }
   .probe.warn .arc { --ac: var(--warn); }
-  .ubar { display: grid; grid-template-columns: repeat(144, minmax(0, 1fr)); gap: 1px; block-size: 1.5rem; margin-block-start: 0.75rem; }
-  .u { border-radius: 1.5px; background: var(--raised); }
+  /* Shape carries the state, not colour alone: a cell with any failed check
+     is full height and striped; up and empty cells are shorter. */
+  .ubar { display: grid; grid-template-columns: repeat(144, minmax(0, 1fr)); grid-template-rows: 100%; align-items: end; gap: 1px; block-size: 1.5rem; margin-block-start: 0.75rem; }
+  .u { block-size: 55%; border-radius: 1.5px; background: var(--raised); }
   .u.up { background: color-mix(in oklch, var(--good) 72%, var(--surface)); }
-  .u.down { background: var(--alert); }
+  .u.down { block-size: 100%; background: repeating-linear-gradient(to bottom, var(--alert) 0 3px, transparent 3px 5px); }
   .u:hover { background: var(--text); }
   @media (width < 600px) { .ubar { gap: 0; } }
   .ubar-scale { display: flex; justify-content: space-between; color: var(--muted); font-size: 0.74rem; margin-block-start: 0.15rem; }
+  .ubar-note { display: flex; align-items: center; gap: 0.35rem; margin-block-start: 0.4rem; color: var(--muted); font-size: 0.85rem; }
+  .ubar-note b { color: var(--text); }
+  .ubar-note > .i { color: var(--good); }
+  .ubar-note.has-down > .i { color: var(--alert-ink); }
 
   .vline { position: relative; display: grid; gap: 0.5rem; margin-inline-start: 0.35rem; padding-inline-start: 1.1rem; border-inline-start: 2px solid var(--border); }
   .vline li { position: relative; display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.2rem 0.5rem; }
@@ -886,11 +907,6 @@
   .page-title > .i { color: var(--accent); }
   .page-title .count { font-size: 0.9rem; }
   .lead { max-inline-size: 64ch; margin-block-start: 0.35rem; font-size: 1.1rem; }
-  .kind-counts { display: flex; flex-wrap: wrap; gap: 0.6rem; margin-block-start: 1rem; }
-  .kind-counts li { display: flex; align-items: center; gap: 0.55rem; padding: 0.5rem 0.95rem 0.5rem 0.7rem; border-radius: var(--radius); background: var(--surface); border: 1px solid var(--border); }
-  .kc-ic { inline-size: 2rem; block-size: 2rem; display: grid; place-items: center; border-radius: 50%; color: var(--kc); background: color-mix(in oklch, var(--kc) 15%, transparent); }
-  .kc-num { font-size: 1.5rem; font-weight: 700; line-height: 1; }
-  .kc-label { color: var(--muted); font-weight: 700; font-size: 0.9rem; }
   .idea-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 0.75rem 1.75rem; margin-block-end: 1.25rem; }
   .idea-js { display: flex; flex-wrap: wrap; align-items: center; gap: 0.6rem; }
   .select { display: inline-flex; align-items: center; gap: 0.45rem; padding: 0.25rem 0.4rem 0.25rem 0.7rem; border-radius: 10px; border: 1px solid var(--border); background: var(--surface); color: var(--muted); }
@@ -957,6 +973,8 @@
   body:has(#s-S:checked) .idea:not([data-size="S"]),
   body:has(#s-M:checked) .idea:not([data-size="M"]),
   body:has(#s-L:checked) .idea:not([data-size="L"]) { display: none; }
+  body:has(#f-yes:checked) .idea:not([data-filed="yes"]),
+  body:has(#f-no:checked) .idea:not([data-filed="no"]) { display: none; }
   /* Each chip counts what it would show under the other filter's choice. */
   .idea-tools .n[data-n]:not([data-n="all"]),
   body:has(input[name="size"]:checked:not(#s-all)) label[for^="k-"] .n[data-n="all"],
@@ -968,6 +986,11 @@
   body:has(#k-bold:checked) label[for^="s-"] .n[data-n="k-bold"],
   body:has(#k-connective:checked) label[for^="s-"] .n[data-n="k-connective"],
   body:has(#k-hardening:checked) label[for^="s-"] .n[data-n="k-hardening"] { display: inline; }
+  /* The kind and size chips count only under each other's choice: with Filed
+     or Not filed chosen their counts would be wrong, so they hide, and the
+     Issue chips count only while kind and size are at All. */
+  body:has(#f-yes:checked, #f-no:checked) .idea-tools :is(label[for^="k-"], label[for^="s-"]) .n[data-n],
+  body:has(input[name="kind"]:checked:not(#k-all), input[name="size"]:checked:not(#s-all)) .idea-tools label[for^="f-"] .n[data-n] { display: none; }
   /* Shown by the per-snapshot sheet for an empty kind and size pair, or by
      ideas.js (.show) when the project select leaves nothing. */
   .ideas-empty {
@@ -1080,14 +1103,14 @@
   /* Map */
   .page-map main { padding-block-end: 0; }
   .map-stage { position: relative; border-block: 1px solid var(--border); background: radial-gradient(ellipse at 50% 50%, color-mix(in oklch, var(--accent) 4%, transparent), transparent 70%); }
-  .map-scroll { overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: thin; }
+  .map-scroll { container: map / inline-size; overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: thin; }
   .map { display: block; inline-size: 100%; min-inline-size: 1080px; block-size: auto; aspect-ratio: 1600 / 940; user-select: none; -webkit-user-select: none; }
   /* The softening lives in the dark fill's alpha, not in opacity: at 0.7
      opacity the light labels fell to 3.3:1. Worst hue: 5.1:1 light, 6.1:1 dark. */
   .cat-label { font-size: 21px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; text-anchor: middle; fill: light-dark(oklch(0.48 0.12 var(--hue)), oklch(0.85 0.12 var(--hue) / 0.7)); paint-order: stroke; stroke: var(--bg); stroke-width: 6px; stroke-linejoin: round; transition: opacity 0.2s; }
   .edge line { stroke: color-mix(in oklch, var(--muted) 32%, transparent); stroke-width: 1.3; transition: stroke 0.2s, opacity 0.2s; }
   .edge.hl line { stroke: var(--accent); stroke-width: 2.4; }
-  .edge-label { font-size: 14px; font-weight: 700; text-anchor: middle; fill: var(--accent-ink); paint-order: stroke; stroke: var(--bg); stroke-width: 5px; stroke-linejoin: round; }
+  .edge-label { font-size: 15px; font-weight: 700; text-anchor: middle; fill: var(--accent-ink); paint-order: stroke; stroke: var(--bg); stroke-width: 5px; stroke-linejoin: round; }
   .node { cursor: pointer; outline: none; touch-action: none; transition: opacity 0.2s; }
   .node .body { fill: color-mix(in oklch, var(--tc) 18%, var(--bg)); stroke: var(--tc); stroke-width: 2; }
   .node .halo { fill: none; stroke: var(--tc); stroke-width: 7; opacity: 0; transform-box: fill-box; transform-origin: center; transition: opacity 0.2s, scale 0.25s var(--ease); }
@@ -1109,6 +1132,22 @@
   @keyframes map-reveal { to { visibility: visible; } }
   .node.dragging { cursor: grabbing; }
   .node.dragging .halo { opacity: 0.45; }
+  /* Labels never draw below 13 px on screen. The map is drawn at least
+     1080 px wide for its 1600 wide viewBox; each step sizes the labels for
+     the narrowest width it covers, widest step first so the narrowest match
+     wins (the base 15 px at 1400 px wide draws 13.1 px). */
+  @container map (width < 1400px) { .node-label, .edge-label { font-size: 16.1px; } }
+  @container map (width < 1300px) { .node-label, .edge-label { font-size: 17.5px; } }
+  @container map (width < 1200px) { .node-label, .edge-label { font-size: 19.5px; } }
+  /* On a phone the list leads and the legend and map wait behind "Show map"
+     (map.js closes the fold there); on a wider screen there is no summary. */
+  .map-fold > summary { display: flex; align-items: center; gap: 0.4rem; inline-size: min(100% - 2 * var(--gutter), var(--wrap)); margin: 0.25rem auto 1rem; padding-block: 0.3rem; font-weight: 700; color: var(--accent-ink); }
+  @media (width >= 700px) { .map-fold > summary { display: none; } }
+  @media (width < 700px) {
+    .map-page { display: flex; flex-direction: column; }
+    .map-page > .page-head { order: -2; }
+    .map-list { order: -1; }
+  }
   .legend { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem 1.25rem; margin-block-end: 0.9rem; font-size: 0.88rem; }
   .legend-h { font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); }
   .legend ul { display: flex; flex-wrap: wrap; gap: 0.4rem 1rem; }
@@ -1203,6 +1242,153 @@
   .suggest a { display: flex; align-items: center; gap: 0.75rem; padding: 0.6rem 0.8rem; border-radius: var(--radius); border: 1px solid var(--border); background: var(--surface); color: var(--text); text-decoration: none; }
   .suggest a:hover { border-color: var(--accent); }
   .suggest a > span:last-child { display: grid; }
+
+  /* Setup, sign-in and Settings (a browser-set-up install). The bare
+     layout carries the brand only; forms are flat cards with 1px borders. */
+  .bare main { padding-block: 1.5rem 4rem; }
+  .bare .brand-word { overflow-wrap: anywhere; }
+  .bare-main { display: grid; gap: 1rem; inline-size: min(100% - 2 * var(--gutter), 34rem); margin-inline: auto; margin-block-start: 1.25rem; }
+  .bare-main.narrow { inline-size: min(100% - 2 * var(--gutter), 26rem); margin-block-start: 2.5rem; }
+  .bare-main.wide { inline-size: min(100% - 2 * var(--gutter), 46rem); }
+  .bare-main > h1, .forge-page > h1 { font-size: clamp(1.5rem, 3.6vw, 1.85rem); overflow-wrap: anywhere; }
+  .bare-main > h1 small, .forge-page > h1 small { display: block; margin-block-start: 0.2rem; font-size: 0.95rem; font-weight: 400; color: var(--muted); }
+  .lede { color: var(--muted); }
+  .forge-page { display: grid; gap: 1rem; max-inline-size: 46rem; }
+
+  .form-card { display: grid; gap: 0.9rem; min-inline-size: 0; padding: 1.15rem 1.25rem; border-radius: var(--radius); border: 1px solid var(--border); background: var(--surface); }
+  .form-card h1, .form-card h2 { display: flex; align-items: center; gap: 0.5rem; font-size: 1.1rem; }
+  .form-card h1 { font-size: 1.35rem; }
+  .form-card h1 > .i, .form-card h2 > .i { color: var(--accent); }
+  .form-card h3 { font-size: 1rem; }
+  .form { display: grid; gap: 0.9rem; min-inline-size: 0; }
+  .form-foot { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 0.6rem 1rem; }
+  .form-foot > .field-hint { margin-inline-end: auto; }
+  .form-inline { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 0.8rem; }
+
+  .field { display: grid; gap: 0.3rem; min-inline-size: 0; }
+  .field label, .field > legend, .field-label { display: flex; align-items: center; gap: 0.45rem; font-weight: 700; font-size: 0.93rem; }
+  .field > legend { padding: 0; margin-block-end: 0.3rem; }
+  .field-label > .i { color: var(--accent); }
+  .field-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0.3rem 0.8rem; }
+  .field-hint { color: var(--muted); font-size: 0.86rem; }
+  .field-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(11rem, 100%), 1fr)); gap: 0.6rem 0.9rem; }
+  .file-ref { gap: 0.55rem; padding-block-start: 0.75rem; border-block-start: 1px dashed var(--border); }
+  .field-err, .form-err, .form-ok { display: flex; align-items: flex-start; gap: 0.45rem; font-size: 0.9rem; }
+  .field-err .i, .form-err .i, .form-ok .i { margin-block-start: 0.2em; }
+  .field-err { color: var(--alert-ink); font-weight: 700; }
+  .form-err, .form-ok { padding: 0.6rem 0.8rem; border-radius: var(--radius-sm); }
+  .form-err { color: var(--alert-ink); font-weight: 700; border: 1px solid color-mix(in oklch, var(--alert) 50%, var(--border)); background: color-mix(in oklch, var(--alert) 9%, var(--surface)); }
+  .form-ok { border: 1px solid color-mix(in oklch, var(--good) 50%, var(--border)); background: color-mix(in oklch, var(--good) 9%, var(--surface)); }
+  .form-ok .i { color: var(--good); }
+
+  .input { inline-size: 100%; min-inline-size: 0; padding: 0.5rem 0.75rem; border-radius: var(--radius-sm); border: 1px solid var(--border); background: var(--bg); color: var(--text); }
+  .input:hover { border-color: color-mix(in oklch, var(--accent) 45%, var(--border)); }
+  /* The top of a refused form links here: room above for the label. */
+  .input[aria-invalid="true"] { border-color: var(--alert); box-shadow: inset 0 0 0 1px var(--alert); scroll-margin-block-start: 2.5rem; }
+  .input::placeholder { color: var(--muted); opacity: 0.8; }
+
+  /* A switch is a native tick box: the knob moves right when on, so the
+     state is a position as well as a colour. */
+  .switch { appearance: none; flex: none; position: relative; inline-size: 2.5rem; block-size: 1.4rem; margin-block-start: 0.1rem; border-radius: 999px; background: var(--border); cursor: pointer; transition: background-color 0.15s; }
+  .switch::before { content: ""; position: absolute; inset-block-start: 0.15rem; inset-inline-start: 0.15rem; inline-size: 1.1rem; block-size: 1.1rem; border-radius: 50%; background: var(--surface); transition: translate 0.15s var(--ease); }
+  .switch:checked { background: var(--accent); }
+  .switch:checked::before { translate: 1.1rem 0; background: var(--on-accent); }
+  .switch:disabled { opacity: 0.45; cursor: not-allowed; }
+  .toggle { display: flex; align-items: flex-start; gap: 0.8rem; }
+  .toggle label { cursor: pointer; }
+  .toggle:has(.switch:disabled) label { color: var(--muted); cursor: not-allowed; }
+
+  .choice { display: flex; align-items: flex-start; gap: 0.8rem; padding: 0.75rem 0.9rem; border-radius: var(--radius-sm); border: 1px solid var(--border); background: var(--bg); cursor: pointer; }
+  .choice + .choice { margin-block-start: 0.5rem; }
+  .choice input { flex: none; margin-block-start: 0.3rem; accent-color: var(--accent); }
+  .choice > span { display: grid; }
+  .choice small { color: var(--muted); font-size: 0.88rem; }
+  .choice:has(input:checked) { border-color: var(--accent); background: color-mix(in oklch, var(--accent) 9%, var(--surface)); }
+  .choice:has(input:focus-visible) { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  .seg { display: flex; flex-wrap: wrap; gap: 0.4rem; }
+  .seg input { position: absolute; opacity: 0; inline-size: 1px; block-size: 1px; pointer-events: none; }
+  .seg label > span { display: inline-flex; align-items: center; gap: 0.3rem; padding: 0.3rem 0.85rem; border-radius: 999px; border: 1px solid var(--border); background: var(--surface); font-size: 0.88rem; cursor: pointer; user-select: none; transition: background-color 0.15s, border-color 0.15s, color 0.15s; }
+  .seg label:hover > span { border-color: color-mix(in oklch, var(--accent) 55%, var(--border)); }
+  .seg input:checked + span { background: var(--text); border-color: var(--text); color: var(--bg); }
+  /* The chosen one also carries a tick, so the choice is not colour alone. */
+  .seg label > span > .i { display: none; inline-size: 1em; block-size: 1em; vertical-align: 0; }
+  .seg input:checked + span > .i { display: inline-block; }
+  .seg input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  .field .chips { display: flex; flex-wrap: wrap; gap: 0.45rem; }
+  .chip.pick { gap: 0.45rem; padding: 0.25rem 0.7rem 0.25rem 0.5rem; font-size: 0.9rem; cursor: pointer; }
+  .chip.pick input { accent-color: var(--accent); }
+  .chip.pick small { color: var(--muted); }
+  .chip.pick:has(input:checked) { border-color: var(--accent); background: color-mix(in oklch, var(--accent) 12%, var(--surface)); }
+
+  .steps { display: flex; gap: 0.5rem; font-size: 0.9rem; font-weight: 700; }
+  .step { flex: 1; display: flex; align-items: center; gap: 0.5rem; min-inline-size: 0; padding: 0.5rem 0.7rem; border-radius: var(--radius-sm); border: 1px solid var(--border); color: var(--muted); }
+  .step-n { flex: none; display: grid; place-items: center; inline-size: 1.5rem; block-size: 1.5rem; border-radius: 50%; border: 1.5px solid currentColor; font-family: var(--mono); font-size: 0.8rem; }
+  .step-n .i { inline-size: 0.95rem; block-size: 0.95rem; }
+  .step.done { color: var(--good); }
+  .step.now { color: var(--text); border-color: var(--accent); background: color-mix(in oklch, var(--accent) 9%, var(--surface)); }
+  .step.now .step-n { border-color: var(--accent); background: var(--accent); color: var(--on-accent); }
+
+  .set-grid { display: grid; grid-template-columns: 12.5rem minmax(0, 1fr); gap: 1.6rem; align-items: start; }
+  .set-main { display: grid; gap: 1rem; min-inline-size: 0; }
+  .side-list { position: sticky; inset-block-start: calc(var(--head-h) + 1rem); }
+  .side-list ul { display: grid; gap: 0.2rem; }
+  .side-list a { display: flex; align-items: center; gap: 0.5rem; padding: 0.4rem 0.7rem; border-radius: var(--radius-sm); border: 1px solid transparent; color: var(--muted); font-weight: 700; text-decoration: none; white-space: nowrap; }
+  .side-list a:hover { color: var(--text); background: var(--raised); border-color: var(--border); }
+  .side-list .i { color: var(--accent); }
+
+  .frow { display: flex; flex-wrap: wrap; align-items: center; gap: 0.6rem 0.8rem; padding-block: 0.75rem; border-block-start: 1px solid var(--border); }
+  .form-card > h2 + .frow, .form-card > h2 + .form-ok + .frow { padding-block-start: 0; border-block-start: 0; }
+  .frow-main { flex: 1; display: grid; gap: 0.2rem; min-inline-size: min(14rem, 100%); }
+  .frow-main small { color: var(--muted); overflow-wrap: anywhere; }
+  .frow-err { color: var(--alert-ink); font-size: 0.88rem; }
+  .frow-acts { display: flex; flex-wrap: wrap; gap: 0.4rem; }
+  .frow-trust { display: flex; align-items: center; gap: 0.35rem; }
+
+  /* The certificate panel: a certificate the normal check refused, what it
+     says, and the way to trust it. The fingerprint is 95 characters: it
+     wraps anywhere rather than widen a phone's page. */
+  .cert { display: grid; gap: 0.6rem; min-inline-size: 0; padding: 0.8rem 0.9rem; border-radius: var(--radius-sm); border: 1px solid color-mix(in oklch, var(--warn) 55%, var(--border)); background: color-mix(in oklch, var(--warn) 8%, var(--surface)); }
+  .cert h2, .cert h3 { display: flex; align-items: center; gap: 0.45rem; font-size: 1rem; }
+  .cert h2 > .i, .cert h3 > .i { color: var(--warn); }
+  .cert-facts { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 0.25rem 1rem; font-size: 0.9rem; }
+  .cert-facts dt { color: var(--muted); }
+  .cert-facts dd { margin: 0; overflow-wrap: anywhere; }
+  .form-ok .mono { overflow-wrap: anywhere; }
+  @media (width < 560px) { .cert-facts { grid-template-columns: minmax(0, 1fr); gap: 0.1rem; } .cert-facts dd { margin-block-end: 0.35rem; } }
+  .fstate { --fc: var(--muted); display: inline-flex; align-items: center; gap: 0.3rem; padding: 0.02rem 0.55rem; border-radius: 999px; border: 1px solid color-mix(in oklch, var(--fc) 45%, var(--border)); color: var(--fc); font-size: 0.82rem; font-weight: 700; white-space: nowrap; vertical-align: 0.1em; }
+  .fstate.ok { --fc: var(--good); }
+  .fstate.bad { --fc: var(--alert-ink); }
+  .fstate.warn { --fc: var(--warn); }
+  .fstate.mut { --fc: var(--muted); }
+  .key-whole { overflow-wrap: anywhere; word-break: break-all; }
+
+  .savebar { position: sticky; inset-block-end: 0; z-index: 5; display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 0.6rem; padding: 0.75rem 1rem; border: 1px solid var(--border); border-radius: var(--radius) var(--radius) 0 0; background: var(--surface); }
+  .savebar [data-unsaved] { margin-inline-end: auto; color: var(--warn); font-weight: 700; }
+
+  .danger { padding-block-start: 0.75rem; border-block-start: 1px solid var(--border); }
+  .danger > summary { display: inline-flex; align-items: center; gap: 0.45rem; color: var(--alert-ink); font-weight: 700; }
+  .danger[open] > summary { margin-block-end: 0.6rem; }
+  .danger > p { margin-block-end: 0.6rem; }
+  .danger .btn { color: var(--alert-ink); border-color: color-mix(in oklch, var(--alert) 50%, var(--border)); }
+
+  .head-settings { padding-block: 0.35rem; }
+  .foot-signin { margin-block-start: 0.5rem; }
+  .foot-signin a { display: inline-flex; align-items: center; gap: 0.4rem; font-weight: 700; }
+  .first-read { max-inline-size: none; margin-block: 0 1rem; }
+
+  @media (width < 760px) {
+    .set-grid { grid-template-columns: minmax(0, 1fr); gap: 1rem; }
+    .side-list { position: static; overflow-x: auto; }
+    .side-list ul { display: flex; gap: 0.3rem; inline-size: max-content; }
+    /* Icon only, as the search button; the word stays for screen readers. */
+    .head-settings { padding: 0; inline-size: 2.3rem; block-size: 2.3rem; justify-content: center; }
+    .head-settings span { position: absolute; inline-size: 1px; block-size: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  }
+  @media (width < 560px) {
+    .steps { flex-direction: column; }
+  }
 }
 
 /* ------------------------------------------------------------ utilities */
@@ -1211,6 +1397,7 @@
   .muted { color: var(--muted); }
   .small { font-size: 0.85rem; }
   .mono { font-family: var(--mono); font-size: 0.92em; }
+  .nobr { white-space: nowrap; }
 }
 
 /* Cross-document morphs (card to project header) and the theme reveal. */
@@ -1234,4 +1421,31 @@
     scroll-behavior: auto !important;
   }
   .status .dot::after, .st-good .sdot::after { display: none; }
+}
+
+/* Contrast themes (forced colours) drop background colours, gradients and
+   shadows, which left the heatmap, the uptime bar and ring and the status
+   dot as empty frames. Here they keep their own paint in system colours;
+   heat levels show by outline weight and failed checks by stripes, not by
+   colour. */
+@media (forced-colors: active) {
+  .hc, .u, .arc, .status .dot, .sdot { forced-color-adjust: none; }
+  .hc { background: Canvas; box-shadow: inset 0 0 0 1px GrayText; }
+  .hc.l1 { box-shadow: inset 0 0 0 2px CanvasText; }
+  .hc.l2 { box-shadow: inset 0 0 0 3px CanvasText; }
+  .hc.l3 { box-shadow: inset 0 0 0 4px CanvasText; }
+  .hc.l4 { background: CanvasText; box-shadow: none; }
+  .hc.pad { background: none; box-shadow: none; }
+  .hc.today, .heat .hc:hover, .heat .hc:focus-visible { outline: 2px solid Highlight; }
+  .u { background: Canvas; box-shadow: inset 0 0 0 1px GrayText; }
+  .u.up { background: CanvasText; box-shadow: none; }
+  .u.down { background: repeating-linear-gradient(to bottom, CanvasText 0 3px, Canvas 3px 5px); box-shadow: none; }
+  .u:hover { background: Highlight; }
+  .arc { --ac: CanvasText; background: conic-gradient(var(--ac) calc(var(--p) * 1%), GrayText 0); color: CanvasText; }
+  .arc::before { background: Canvas; }
+  .status .dot, .sdot { background: CanvasText; }
+  .switch { forced-color-adjust: none; border: 1px solid CanvasText; }
+  .switch::before { background: CanvasText; }
+  .switch:checked { background: Highlight; }
+  .seg input:checked + span { forced-color-adjust: none; background: Highlight; border-color: Highlight; color: HighlightText; }
 }

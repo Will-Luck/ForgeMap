@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Will-Luck/waymark/internal/model"
+	"github.com/Will-Luck/forgemap/internal/model"
 )
 
 // writeBeacon writes the world's feed with beacon's container in state with

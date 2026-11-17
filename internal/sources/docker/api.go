@@ -19,7 +19,7 @@ const apiTimeout = 10 * time.Second
 // maxAPIBody caps what one container list may weigh.
 const maxAPIBody = 8 << 20
 
-// apiContainer is the part of the Engine API's container list Waymark reads.
+// apiContainer is the part of the Engine API's container list ForgeMap reads.
 type apiContainer struct {
 	ID      string            `json:"Id"`
 	Names   []string          `json:"Names"`

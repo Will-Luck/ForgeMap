@@ -74,6 +74,13 @@ type Meta struct {
 	Timezone string `json:"timezone,omitempty"`
 	// Demo: the data is demo mode's invented world, and every page says so.
 	Demo bool `json:"demo,omitempty"`
+	// RefreshOff: refreshes are turned off (refresh: false), so the
+	// palette offers no Refresh now and POST /api/refresh answers 404.
+	RefreshOff bool `json:"refresh_off,omitempty"`
+	// Managed: this install is set up in the browser, so the page points to Settings, not to a config file.
+	Managed bool `json:"managed,omitempty"`
+	// FirstRead: the first read of the forges has not finished; only a Managed site sets it.
+	FirstRead bool `json:"first_read,omitempty"`
 }
 
 type SourceStatus struct {
@@ -167,6 +174,15 @@ type Hold struct {
 	Since        time.Time `json:"since"`
 	Contradicted bool      `json:"contradicted"`
 	CommitsSince int       `json:"commits_since"`
+}
+
+// HoldWord is a hold's kind as the sentences that describe the hold say it
+// ("Parked since 7 Sep"); the badge says On hold for either kind.
+func HoldWord(kind string) string {
+	if kind == "frozen" {
+		return "Frozen"
+	}
+	return "Parked"
 }
 
 type RepoInfo struct {

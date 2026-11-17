@@ -1,4 +1,4 @@
-// Package config loads the Waymark configuration: one YAML file with ${VAR}
+// Package config loads the ForgeMap configuration: one YAML file with ${VAR}
 // expansion, or an env-only quick start. It owns every default; the
 // Dockerfile sets none.
 package config
@@ -17,20 +17,21 @@ import (
 	"slices"
 	"strconv"
 	"strings"
-	"time"
-	"unicode"
 
 	"gopkg.in/yaml.v3"
 )
 
-// ExampleYAML is the documented example file, shipped as waymark.example.yml.
+// ExampleYAML is the documented example file, shipped as forgemap.example.yml.
 //
 //go:embed example.yml
 var ExampleYAML []byte
 
 const (
-	defaultConfigPath = "/config/waymark.yml"
-	githubAPI         = "https://api.github.com"
+	defaultConfigPath = "/config/forgemap.yml"
+	// oldConfigPath is where 0.2.x (Waymark) read its config. ForgeMap
+	// never reads it; ResolvePath stops on it.
+	oldConfigPath = "/config/waymark.yml"
+	githubAPI     = "https://api.github.com"
 )
 
 type Config struct {
@@ -45,6 +46,9 @@ type Config struct {
 	Plans           Plans
 	Docker          Docker
 	Probes          Probes
+	// RefreshOff: refresh: false (or FORGEMAP_REFRESH=false) turns off
+	// Refresh now and POST /api/refresh. The zero value keeps them on.
+	RefreshOff bool
 	// Demo marks the synthetic world demo mode serves; the page says so.
 	// It has no YAML key: only -demo sets it.
 	Demo bool
@@ -56,8 +60,8 @@ type Config struct {
 	Warnings []string
 	// badEnv are environment values Load could not use; Validate reports them.
 	badEnv []string
-	// envOnly: the env-only quick start, so errors name its variables.
-	envOnly bool
+	// origin is where the Config came from, so errors name what to fix.
+	origin Origin
 }
 
 type Site struct {
@@ -70,13 +74,23 @@ type Forge struct {
 	ID, Type, URL, Token string
 	Owners               []string
 	Heatmap              bool
+	// Forks: a repo that is a fork is tracked too. Off (the default), a
+	// fork is tracked only when the projects file names it.
+	Forks bool
+	// Cert is the SHA-256 (lower-case hex) of the one certificate the owner
+	// trusted for this forge from the page: its requests check that and
+	// nothing else. Only a browser-set-up install sets it; a config file
+	// has no key for it.
+	Cert string
 }
 
 // FileRef points at a file on disk, or at a file in a forge repo. Empty means
-// not set.
+// not set. Its JSON keys are the config file's (settings.json stores it).
 type FileRef struct {
-	File              string
-	Forge, Repo, Path string
+	File  string `json:"file"`
+	Forge string `json:"forge"`
+	Repo  string `json:"repo"`
+	Path  string `json:"path"`
 }
 
 func (f FileRef) isSet() bool    { return f.File != "" || f.inRepo() }
@@ -121,6 +135,7 @@ type fileConfig struct {
 	Plans          filePlans    `yaml:"plans"`
 	Docker         fileDocker   `yaml:"docker"`
 	Probes         fileProbes   `yaml:"probes"`
+	Refresh        *bool        `yaml:"refresh"`
 }
 
 type fileSite struct {
@@ -136,6 +151,7 @@ type fileForge struct {
 	Token   string   `yaml:"token"`
 	Owners  []string `yaml:"owners"`
 	Heatmap *bool    `yaml:"heatmap"`
+	Forks   bool     `yaml:"forks"`
 }
 
 type fileRef struct {
@@ -177,16 +193,42 @@ type fileProbes struct {
 	Homepages *bool `yaml:"homepages"`
 }
 
-// ResolvePath picks the config file: WAYMARK_CONFIG if set, else
-// /config/waymark.yml if it exists, else "" (env-only quick start).
-func ResolvePath(getenv func(string) string, exists func(string) bool) string {
-	if p := strings.TrimSpace(getenv("WAYMARK_CONFIG")); p != "" {
-		return p
+// ResolvePath picks the config file: FORGEMAP_CONFIG if set, else
+// /config/forgemap.yml if it exists, else "" (env-only quick start).
+//
+// Before the quick start it looks for what a 0.2.x (Waymark) install that
+// only swapped the image leaves: /config/waymark.yml, or WAYMARK_CONFIG set.
+// ForgeMap reads neither, so either one is an error that says what to
+// rename, not a quiet start on the environment alone.
+func ResolvePath(getenv func(string) string, exists func(string) bool) (string, error) {
+	if p := strings.TrimSpace(getenv("FORGEMAP_CONFIG")); p != "" {
+		return p, nil
 	}
 	if exists(defaultConfigPath) {
-		return defaultConfigPath
+		return defaultConfigPath, nil
 	}
-	return ""
+	if exists(oldConfigPath) {
+		return "", fmt.Errorf("config: found %s (Waymark is now ForgeMap): rename it to forgemap.yml or set FORGEMAP_CONFIG", oldConfigPath)
+	}
+	if strings.TrimSpace(getenv("WAYMARK_CONFIG")) != "" {
+		return "", errors.New("config: WAYMARK_CONFIG is set (Waymark is now ForgeMap): set FORGEMAP_CONFIG instead")
+	}
+	return "", nil
+}
+
+// OldVariables warns of each WAYMARK_ variable set in environ (KEY=value,
+// as os.Environ gives them): 0.2.x read them and ForgeMap does not. A
+// warning names the variable and its FORGEMAP_ form, never its value.
+func OldVariables(environ []string) []string {
+	var out []string
+	for _, kv := range environ {
+		k, _, _ := strings.Cut(kv, "=")
+		if rest, ok := strings.CutPrefix(k, "WAYMARK_"); ok {
+			out = append(out, fmt.Sprintf("%s is set but no longer read (Waymark is now ForgeMap): use FORGEMAP_%s", k, rest))
+		}
+	}
+	slices.Sort(out)
+	return out
 }
 
 // FileExists reports whether path names an existing file; main passes it to
@@ -222,12 +264,21 @@ func Load(path string, getenv func(string) string) (Config, error) {
 		for _, f := range fc.Forges {
 			forges = append(forges, Forge{
 				ID: f.ID, Type: f.Type, URL: f.URL, Token: f.Token,
-				Owners: f.Owners, Heatmap: boolOr(f.Heatmap, true),
+				Owners: f.Owners, Heatmap: boolOr(f.Heatmap, true), Forks: f.Forks,
 			})
 		}
 	}
 	c := build(fc, forges, getenv)
-	c.Warnings, c.envOnly = warnings, path == ""
+	c.Warnings = warnings
+	if path == "" {
+		c.origin = OriginEnv
+		// The quick start has no file to set forks in: one variable sets it
+		// for both of its forges.
+		forks := envBool(getenv, "FORGEMAP_FORKS", false, &c.badEnv)
+		for i := range c.Forges {
+			c.Forges[i].Forks = forks
+		}
+	}
 	return c, nil
 }
 
@@ -270,32 +321,37 @@ func build(fc fileConfig, forges []Forge, getenv func(string) string) Config {
 	}
 	// Private repos show only when asked for: the page has no login. The
 	// file's key wins; only without it is the variable read (and checked).
-	includePrivate, badEnv := false, []string(nil)
+	var badEnv []string
+	includePrivate := false
 	if fc.IncludePrivate != nil {
 		includePrivate = *fc.IncludePrivate
-	} else if v := strings.TrimSpace(getenv("WAYMARK_INCLUDE_PRIVATE")); v != "" {
-		b, err := strconv.ParseBool(v)
-		if err != nil {
-			badEnv = append(badEnv, fmt.Sprintf("WAYMARK_INCLUDE_PRIVATE: %q is not true or false", v))
-		}
-		includePrivate = b
+	} else {
+		includePrivate = envBool(getenv, "FORGEMAP_INCLUDE_PRIVATE", false, &badEnv)
+	}
+	// Refresh now is on unless turned off, the same way.
+	refresh := true
+	if fc.Refresh != nil {
+		refresh = *fc.Refresh
+	} else {
+		refresh = envBool(getenv, "FORGEMAP_REFRESH", true, &badEnv)
 	}
 	c := Config{
-		Listen:         str(fc.Listen, env("WAYMARK_LISTEN", ":8080")),
+		Listen:         str(fc.Listen, env("FORGEMAP_LISTEN", ":8080")),
 		DataDir:        str(fc.DataDir, env("DATA_DIR", "/data")),
 		IncludePrivate: includePrivate,
+		RefreshOff:     !refresh,
 		badEnv:         badEnv,
 		Forges:         forges,
 		Projects:       FileRef(fc.Projects),
 		Site: Site{
-			Title:    str(fc.Site.Title, env("WAYMARK_TITLE", "Waymark")),
+			Title:    str(fc.Site.Title, env("FORGEMAP_TITLE", "ForgeMap")),
 			Timezone: str(fc.Site.Timezone, env("TZ", "UTC")),
 			You:      fc.Site.You,
 		},
 		Ideas: Ideas{
 			Labels: list(fc.Ideas.Labels, []string{"idea", "enhancement"}),
 			File:   FileRef(fc.Ideas.fileRef),
-			Marker: str(fc.Ideas.Marker, "waymark-idea:"),
+			Marker: str(fc.Ideas.Marker, "forgemap-idea:"),
 		},
 		NeedsYou: NeedsYou{
 			Labels:         list(fc.NeedsYou.Labels, []string{"needs-you", "decision"}),
@@ -354,6 +410,22 @@ func boolOr(p *bool, def bool) bool {
 	return *p
 }
 
+// envBool reads a true-or-false variable: def when it is unset or blank. A
+// value that is not a boolean gives def and is recorded in bad, which
+// Validate reports, naming the variable.
+func envBool(getenv func(string) string, key string, def bool, bad *[]string) bool {
+	v := strings.TrimSpace(getenv(key))
+	if v == "" {
+		return def
+	}
+	b, err := strconv.ParseBool(v)
+	if err != nil {
+		*bad = append(*bad, fmt.Sprintf("%s: %q is not true or false", key, v))
+		return def
+	}
+	return b
+}
+
 // SourceNames are the app's source statuses besides one per forge id, in the
 // order the site lists them (the first forge before them, the other forges
 // after). No forge id may take one. Each call returns a fresh copy.
@@ -361,89 +433,31 @@ func SourceNames() []string {
 	return []string{"registry", "heatmap", "ideas", "docker", "probes", "notes", "fdroid"}
 }
 
-// Validate checks the config. Errors name the field and never carry a token.
+// TokenSetting names where forge id's token is set, for a message that says
+// what to fix: GITEA_TOKEN or GITHUB_TOKEN in the environment-only quick
+// start, the token in Settings for an install set up in the browser, else
+// forges[N].token. It never holds a value.
+func (c Config) TokenSetting(id string) string {
+	switch c.origin {
+	case OriginEnv:
+		return strings.ToUpper(id) + "_TOKEN"
+	case OriginSettings:
+		return "the token in Settings"
+	}
+	for i, f := range c.Forges {
+		if f.ID == id {
+			return fmt.Sprintf("forges[%d].token", i)
+		}
+	}
+	return "the forge's token"
+}
+
+// Validate checks the config: one line per Problem, in order. Errors name
+// the field and never carry a token.
 func (c Config) Validate() error {
 	var errs []error
-	bad := func(format string, a ...any) { errs = append(errs, fmt.Errorf(format, a...)) }
-
-	for _, e := range c.badEnv {
-		bad("%s", e)
-	}
-	if _, err := time.LoadLocation(c.Site.Timezone); err != nil {
-		bad("site.timezone: %q is not a known time zone (like UTC or America/New_York)", c.Site.Timezone)
-	}
-	if len(c.Forges) == 0 {
-		bad("forges: at least one forge is required (set forges in the file, or GITEA_URL+GITEA_TOKEN or GITHUB_TOKEN)")
-	}
-	ids := map[string]bool{}
-	for i, f := range c.Forges {
-		at := fmt.Sprintf("forges[%d]", i)
-		urlKey := at + ".url"
-		if c.envOnly && f.ID == "gitea" {
-			urlKey = "GITEA_URL"
-		}
-		switch {
-		case f.ID == "":
-			bad("%s.id: required", at)
-		case slices.Contains(SourceNames(), f.ID):
-			bad("%s.id: %q is the name of another source; choose another id", at, f.ID)
-		case ids[f.ID]:
-			bad("%s.id: duplicate forge id %q", at, f.ID)
-		default:
-			ids[f.ID] = true
-		}
-		switch f.Type {
-		case "gitea", "forgejo":
-			if f.URL == "" {
-				bad("%s: required for type %s", urlKey, f.Type)
-			} else if p := forgeURLProblem(f.URL, true); p != "" {
-				bad("%s: %s", urlKey, p)
-			}
-		case "github":
-			if p := forgeURLProblem(f.URL, false); f.URL != "" && p != "" {
-				bad("%s: %s", urlKey, p)
-			}
-		default:
-			bad("%s.type: %q is not one of gitea, forgejo, github", at, f.Type)
-		}
-	}
-
-	checkRef := func(name string, r FileRef) {
-		if r.File != "" && r.inRepo() {
-			bad("%s: set either file or forge/repo/path, not both", name)
-			return
-		}
-		if r.inRepo() {
-			if !r.complete() {
-				bad("%s: forge, repo and path must all be set together", name)
-			} else if !ids[r.Forge] {
-				bad("%s.forge: %q is not a configured forge id", name, r.Forge)
-			}
-		}
-	}
-	checkRef("projects", c.Projects)
-	checkRef("ideas", c.Ideas.File)
-	if !strings.ContainsFunc(c.Ideas.Marker, func(r rune) bool { return unicode.IsLetter(r) || unicode.IsDigit(r) }) {
-		bad("ideas.marker: %q needs a letter or digit (filed ideas are searched for by it)", c.Ideas.Marker)
-	}
-
-	switch c.Notes.Type {
-	case "none":
-	case "markdown", "claude-memory":
-		if c.Notes.Dir == "" {
-			bad("notes.dir: required for type %s", c.Notes.Type)
-		}
-	default:
-		bad("notes.type: %q is not one of none, markdown, claude-memory", c.Notes.Type)
-	}
-	if c.Docker.Feed != "" && c.Docker.Host != "" {
-		bad("docker: set either feed or host, not both")
-	}
-	if c.Docker.Host != "" && !dockerHostOK(c.Docker.Host) {
-		bad("docker.host: must be unix:///path/to/socket or tcp://host:port, with no credentials, path or query")
-	}
-	if len(errs) == 0 {
-		return nil
+	for _, p := range c.Problems() {
+		errs = append(errs, errors.New(p.line))
 	}
 	return errors.Join(errs...)
 }
@@ -479,20 +493,24 @@ func expandStrings(v reflect.Value, mapping func(string) string) {
 	}
 }
 
-// forgeURLProblem says what is wrong with a forge's url, or "". It never
-// repeats the URL: it may hold a password. gitea: the site address, to which
-// Waymark adds /api/v1 itself.
-func forgeURLProblem(raw string, gitea bool) string {
+// forgeURLProblem says what is wrong with a forge's url, or "" twice: line
+// is what follows the key in Validate's text for a file or the quick start,
+// words the sentence a form shows. Neither repeats the URL: it may hold a
+// password. gitea: the site address, to which ForgeMap adds /api/v1 itself.
+func forgeURLProblem(raw string, gitea bool) (line, words string) {
 	u, err := url.Parse(raw)
 	switch {
 	case err != nil || u.Scheme != "http" && u.Scheme != "https" || u.Host == "":
-		return "must be an http:// or https:// address, such as https://git.example.com"
+		return "must be an http:// or https:// address, such as https://git.example.com",
+			"The address must start with http:// or https://, such as https://git.example.com."
 	case u.User != nil:
-		return "must not hold a user name or password (the token goes in token)"
+		return "must not hold a user name or password (the token goes in token)",
+			"The address must not hold a user name or password: the token has a field of its own."
 	case gitea && strings.HasSuffix(strings.ToLower(strings.TrimRight(u.Path, "/")), "/api/v1"):
-		return "drop /api/v1: give the site address, and Waymark adds it"
+		return "drop /api/v1: give the site address, and ForgeMap adds it",
+			"Leave out /api/v1: give the site's address, and ForgeMap adds it."
 	}
-	return ""
+	return "", ""
 }
 
 // dockerHostOK reports whether host is unix:///path or tcp://host:port with

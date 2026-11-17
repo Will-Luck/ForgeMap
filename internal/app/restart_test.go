@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Will-Luck/waymark/internal/config"
-	"github.com/Will-Luck/waymark/internal/model"
+	"github.com/Will-Luck/forgemap/internal/config"
+	"github.com/Will-Luck/forgemap/internal/model"
 )
 
 // Without include_private (the default) a repo project shows only once its

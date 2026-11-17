@@ -6,11 +6,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Will-Luck/waymark/internal/derive"
-	"github.com/Will-Luck/waymark/internal/forge"
-	"github.com/Will-Luck/waymark/internal/model"
-	"github.com/Will-Luck/waymark/internal/registry"
-	"github.com/Will-Luck/waymark/internal/sources/docker"
+	"github.com/Will-Luck/forgemap/internal/config"
+	"github.com/Will-Luck/forgemap/internal/derive"
+	"github.com/Will-Luck/forgemap/internal/forge"
+	"github.com/Will-Luck/forgemap/internal/model"
+	"github.com/Will-Luck/forgemap/internal/registry"
+	"github.com/Will-Luck/forgemap/internal/sources/docker"
 )
 
 var nilTime time.Time
@@ -76,7 +77,9 @@ func (a *App) inputsLocked(now time.Time) derive.SiteInput {
 			}
 		}
 		if p.FDroid != nil {
-			if fd, ok := a.fdroid[p.FDroid.Index]; ok {
+			// The last read kept only the packages named then: one named since
+			// is not read yet (catchUpFDroid reads it), not missing.
+			if fd, ok := a.fdroid[p.FDroid.Index]; ok && fd.wanted[p.FDroid.Package] {
 				in.FDroidIndexRead = true
 				if pkg, ok := fd.pkgs[p.FDroid.Package]; ok {
 					in.FDroid, in.FDroidAt = &pkg, fd.at
@@ -163,6 +166,8 @@ func (a *App) metaLocked() model.Meta {
 		Forges:     a.forgeNames,
 		Timezone:   a.cfg.Site.Timezone,
 		Demo:       a.cfg.Demo,
+		RefreshOff: a.cfg.RefreshOff,
+		Managed:    a.cfg.Origin() == config.OriginSettings,
 
 		ProjectsFile: isSet(a.cfg.Projects),
 		IdeasFile:    isSet(a.cfg.Ideas.File),

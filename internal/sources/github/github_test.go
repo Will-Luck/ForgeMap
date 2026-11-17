@@ -16,7 +16,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/Will-Luck/waymark/internal/forge"
+	"github.com/Will-Luck/forgemap/internal/forge"
 )
 
 const fixtures = "../../../testdata/github/"
@@ -67,7 +67,9 @@ func newFake(t *testing.T, token string) (*fakeGitHub, *Client) {
 		}
 	}))
 	t.Cleanup(srv.Close)
-	return f, New("github", srv.URL, token)
+	c := New("github", srv.URL, token)
+	c.Retry = forge.Retry{Sleep: func(context.Context, time.Duration) error { return nil }}
+	return f, c
 }
 
 func (f *fakeGitHub) route(path string, h http.HandlerFunc) {
@@ -153,7 +155,7 @@ func TestGitHubImplementsForge(t *testing.T) {
 }
 
 // REST and GraphQL calls name the client (GitHub asks every API client for a
-// User-Agent): waymark/dev until the app sets its version.
+// User-Agent): ForgeMap/dev until the app sets its version.
 func TestUserAgent(t *testing.T) {
 	f, c := newFake(t, "s3cret")
 	var mu sync.Mutex
@@ -170,7 +172,7 @@ func TestUserAgent(t *testing.T) {
 	if _, err := c.Me(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	c.UserAgent = "waymark/1.2.3"
+	c.UserAgent = "ForgeMap/1.2.3"
 	if _, err := c.Me(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -183,7 +185,7 @@ func TestUserAgent(t *testing.T) {
 	if err := c.graphql(context.Background(), "query { viewer { login } }", nil, &struct{}{}); err != nil {
 		t.Fatal(err)
 	}
-	if want := "GET waymark/dev,GET waymark/1.2.3,POST waymark/1.2.3"; strings.Join(got, ",") != want {
+	if want := "GET ForgeMap/dev,GET ForgeMap/1.2.3,POST ForgeMap/1.2.3"; strings.Join(got, ",") != want {
 		t.Errorf("User-Agents = %q, want %s", got, want)
 	}
 }
@@ -587,7 +589,7 @@ func TestNoTokenSkipsFullDetail(t *testing.T) {
 	if _, err := c.FetchFiles(ctx, repo, []string{"docs/plans"}, now); !errors.Is(err, forge.ErrNeedsToken) {
 		t.Errorf("files err = %v", err)
 	}
-	if _, err := c.SearchIssues(ctx, "waymark-idea"); !errors.Is(err, forge.ErrNeedsToken) {
+	if _, err := c.SearchIssues(ctx, "forgemap-idea"); !errors.Is(err, forge.ErrNeedsToken) {
 		t.Errorf("search err = %v", err)
 	}
 	if _, err := c.Me(ctx); !errors.Is(err, forge.ErrNeedsToken) {
@@ -812,11 +814,12 @@ func TestETagCacheBounded(t *testing.T) {
 	if get("/repos/acme/r0", nil) {
 		t.Error("the oldest body must have gone: the cache is bounded")
 	}
-	// A commit window's since moves on every call: its pages are not kept.
+	// A commit window asks from the start of a UTC day, so its URL recurs
+	// all day and its pages are kept like any other.
 	since := url.Values{"since": {"2026-08-09T00:00:00Z"}}
 	get("/repos/acme/app/commits", since)
-	if get("/repos/acme/app/commits", since) {
-		t.Error("a since query must not be cached")
+	if !get("/repos/acme/app/commits", since) {
+		t.Error("a since query must be cached: its URL recurs all day")
 	}
 }
 
@@ -824,7 +827,7 @@ func TestFetchFiltersPullsAndHandlesNoRelease(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/repos/o/r":
-			_, _ = w.Write([]byte(`{"full_name":"o/r","html_url":"https://github.com/o/r","stargazers_count":2}`))
+			_, _ = w.Write([]byte(`{"full_name":"o/r","html_url":"https://github.com/o/r","stargazers_count":2,"open_issues_count":2}`))
 		case "/repos/o/r/issues":
 			_, _ = w.Write([]byte(`[{"number":2,"title":"a PR","pull_request":{"url":"x"}},{"number":1,"title":"bug","updated_at":"2026-10-01T00:00:00Z"}]`))
 		default:
@@ -1018,11 +1021,11 @@ func TestSearchIssuesScopedToOwners(t *testing.T) {
 	})
 	ctx := context.Background()
 	// Before any listing the search covers the token user's repos, never all of GitHub.
-	is, err := c.SearchIssues(ctx, "waymark-idea")
+	is, err := c.SearchIssues(ctx, "forgemap-idea")
 	if err != nil || len(is) != 1 {
 		t.Fatalf("search = %+v %v", is, err)
 	}
-	if got := is[0]; got.Number != 21 || got.Repository == nil || got.Repository.FullName != "acme/app" || !strings.Contains(got.Body, "waymark-idea:csv-export") {
+	if got := is[0]; got.Number != 21 || got.Repository == nil || got.Repository.FullName != "acme/app" || !strings.Contains(got.Body, "forgemap-idea:csv-export") {
 		t.Errorf("result = %+v", got)
 	}
 	f.text("/user/repos", "[]")
@@ -1031,10 +1034,10 @@ func TestSearchIssuesScopedToOwners(t *testing.T) {
 	if _, err := c.ListRepos(ctx, []string{"acme", "example-org", "example-user"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := c.SearchIssues(ctx, "waymark-idea"); err != nil {
+	if _, err := c.SearchIssues(ctx, "forgemap-idea"); err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"waymark-idea is:issue user:acme", "waymark-idea is:issue user:acme org:example-org user:example-user"}
+	want := []string{"forgemap-idea is:issue user:acme", "forgemap-idea is:issue user:acme org:example-org user:example-user"}
 	if strings.Join(queries, "|") != strings.Join(want, "|") {
 		t.Errorf("queries = %q, want %q", queries, want)
 	}
@@ -1085,4 +1088,204 @@ func TestRepoByName(t *testing.T) {
 		t.Errorf("private mirror = %+v %v", m, err)
 	}
 	f.checkAuth("")
+}
+
+// GETs and the read-only GraphQL POST that fail fast are tried again; the
+// POST is sent whole again. A rate limit is not tried again.
+func TestRetriesQuickFailures(t *testing.T) {
+	f, c := newFake(t, "s3cret")
+	ctx := context.Background()
+	var mu sync.Mutex
+	tries := map[string]int{}
+	first := func(what string) bool {
+		mu.Lock()
+		defer mu.Unlock()
+		tries[what]++
+		return tries[what] == 1
+	}
+	f.route("/repos/acme/app/releases", func(w http.ResponseWriter, r *http.Request) {
+		if first("releases") {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		_, _ = w.Write([]byte(`[{"tag_name":"v1.0.0"}]`))
+	})
+	if rels, err := c.Releases(ctx, "acme/app"); err != nil || len(rels) != 1 || len(f.requests("/releases")) != 2 {
+		t.Errorf("503 once, then 200: %v %v, requests %v", rels, err, f.requests("/releases"))
+	}
+	f.graphql(func(w http.ResponseWriter, query string, vars map[string]any) {
+		if first("graphql") {
+			w.WriteHeader(http.StatusBadGateway)
+			return
+		}
+		if !strings.Contains(query, "refs(refPrefix") || vars["owner"] != "acme" || vars["name"] != "app" {
+			t.Errorf("the retried POST lost its body: query %q, vars %v", query, vars)
+		}
+		_, _ = w.Write(tagPage([]string{"v1.0.0"}, ""))
+	})
+	if tags, err := c.Tags(ctx, "acme/app"); err != nil || len(tags) != 1 || len(f.requests("POST /graphql")) != 2 {
+		t.Errorf("graphql 502 once, then 200: %v %v, requests %v", tags, err, f.requests("POST /graphql"))
+	}
+	f.route("/repos/acme/app/pulls", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-RateLimit-Remaining", "0")
+		w.Header().Set("X-RateLimit-Reset", "1793500440")
+		w.WriteHeader(http.StatusTooManyRequests)
+	})
+	if _, err := c.openPulls(ctx, "acme/app"); !isRateLimit(err) || len(f.requests("/pulls")) != 1 {
+		t.Errorf("rate limit: %v, requests %v; want the limit after 1 request", err, f.requests("/pulls"))
+	}
+}
+
+// The app tells a failed read by its status: a 503 that stays through the
+// retries fails fast (the detail pass stops asking the forge), a 404 does
+// not, and both say their status.
+func TestStatusErrorsSayTheirStatus(t *testing.T) {
+	f, c := newFake(t, "s3cret")
+	f.route("/repos/acme/down", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusServiceUnavailable) })
+	_, err := c.Repo(context.Background(), "acme/down")
+	if !forge.FailedFast(err) || forge.Status(err) != http.StatusServiceUnavailable {
+		t.Errorf("503: %v, failed fast %v, status %d", err, forge.FailedFast(err), forge.Status(err))
+	}
+	_, err = c.FetchMirror(context.Background(), "acme/gone", date("2026-11-01T00:00:00Z"))
+	if forge.FailedFast(err) || forge.Status(err) != http.StatusNotFound {
+		t.Errorf("missing mirror: %v, failed fast %v, status %d", err, forge.FailedFast(err), forge.Status(err))
+	}
+}
+
+// A mirror that is not there keeps its words but is a 404 (IsNotFound), so
+// the app waits a full mirror pass before asking again.
+func TestMissingMirrorIsNotFound(t *testing.T) {
+	_, c := newFake(t, "")
+	_, err := c.FetchMirror(context.Background(), "acme/gone", date("2026-11-01T00:00:00Z"))
+	if !IsNotFound(err) || err.Error() != "github acme/gone: not found (private or renamed?)" {
+		t.Errorf("err = %v (not found %v)", err, IsNotFound(err))
+	}
+}
+
+// A mirror with no open issues or pull requests (open_issues_count counts
+// both) is read in two calls: the repo and its latest release.
+func TestMirrorWithNoOpenIssuesSkipsTheIssueList(t *testing.T) {
+	f, c := newFake(t, "")
+	f.text("/repos/acme/quiet", `{"full_name":"acme/quiet","html_url":"https://github.com/acme/quiet","stargazers_count":3,"open_issues_count":0}`)
+	f.text("/repos/acme/quiet/issues", `[]`)
+	f.text("/repos/acme/quiet/releases/latest", `{"tag_name":"v2.0.0"}`)
+	m, err := c.FetchMirror(context.Background(), "acme/quiet", date("2026-11-01T00:00:00Z"))
+	if err != nil || m.Stars != 3 || m.LatestRelease != "v2.0.0" || m.OpenIssues != 0 || len(m.Issues) != 0 {
+		t.Fatalf("mirror = %+v %v", m, err)
+	}
+	if got := f.requests(""); len(got) != 2 || len(f.requests("/issues")) != 0 {
+		t.Errorf("requests = %v, want the repo and its latest release only", got)
+	}
+}
+
+// An answer that says the allowance is spent (X-RateLimit-Remaining 0) ends
+// the asking: the next read of that pool is not sent and fails as the rate
+// limit, with the answer's reset; the app's wait then decides when to ask
+// again. GraphQL has its own allowance, and a reset already past holds
+// nothing back.
+func TestSpentAllowanceIsNotAskedAgain(t *testing.T) {
+	f, c := newFake(t, "")
+	now := date("2026-11-01T14:00:00Z")
+	c.now = func() time.Time { return now }
+	reset := now.Add(20 * time.Minute)
+	f.route("/repos/acme/app", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-RateLimit-Remaining", "0")
+		w.Header().Set("X-RateLimit-Reset", fmt.Sprint(reset.Unix()))
+		_, _ = w.Write([]byte(`{"full_name":"acme/app","open_issues_count":0}`))
+	})
+	f.text("/repos/acme/app/releases/latest", `{"tag_name":"v1.0.0"}`)
+	f.graphql(noTags)
+	ctx := context.Background()
+	_, err := c.FetchMirror(ctx, "acme/app", now)
+	if got, ok := forge.RateLimited(err); !ok || !got.Equal(reset) || err.Error() != "github: rate limit reached (60 requests an hour without a token)" {
+		t.Errorf("err = %v (reset %v), want the limit, resetting at %v", err, got, reset)
+	}
+	if n := len(f.requests("/releases/latest")); n != 0 {
+		t.Errorf("the read the spent allowance had no room for was sent %d times", n)
+	}
+	if _, err := c.Tags(ctx, "acme/app"); err != nil || len(f.requests("POST /graphql")) != 1 {
+		t.Errorf("graphql after a spent REST allowance: %v, %d sent; want it sent", err, len(f.requests("POST /graphql")))
+	}
+	now = reset.Add(time.Second)
+	if _, err := c.FetchMirror(ctx, "acme/app", now); err != nil || len(f.requests("/releases/latest")) != 1 {
+		t.Errorf("after the reset: %v, latest release asked %d times; want the whole read", err, len(f.requests("/releases/latest")))
+	}
+}
+
+// With a token, the commit window's since is sent as its UTC day, so the URL
+// is the same all day and an unchanged page answers 304 (free with a token);
+// the window itself still starts at the exact time.
+func TestCommitsSinceIsTheDay(t *testing.T) {
+	f, c := newFake(t, "s3cret")
+	var notModified atomic.Int32
+	page := "[" + commitJSON("aa", date("2026-10-31T09:00:00Z")) + "," + commitJSON("bb", date("2026-10-01T05:00:00Z")) + "]"
+	f.route("/repos/acme/app/commits", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("ETag", `"c1"`)
+		if r.Header.Get("If-None-Match") == `"c1"` {
+			notModified.Add(1)
+			w.WriteHeader(http.StatusNotModified)
+			return
+		}
+		_, _ = w.Write([]byte(page))
+	})
+	for _, since := range []string{"2026-10-01T10:00:00Z", "2026-10-01T10:01:00Z"} {
+		got, _, err := c.Commits(context.Background(), "acme/app", "main", date(since), 3)
+		if err != nil || len(got) != 1 || got[0].SHA != "aa" {
+			t.Errorf("since %s: commits %v %v, want only the one after the exact start", since, got, err)
+		}
+	}
+	reqs := f.requests("/commits")
+	if len(reqs) != 2 || reqs[0] != reqs[1] || !strings.Contains(reqs[0], "since=2026-10-01T00%3A00%3A00Z") {
+		t.Errorf("requests %q, want one URL for the day", reqs)
+	}
+	if n := notModified.Load(); n != 1 {
+		t.Errorf("%d answers were 304, want the second", n)
+	}
+}
+
+// Tags move only with a push: while pushed_at stands, the GraphQL tag query
+// is not sent again. A release naming a tag the kept list lacks (made in the
+// web UI, say) brings the query back.
+func TestTagsKeptWhilePushedAtStands(t *testing.T) {
+	f, c := newFake(t, "s3cret")
+	var mu sync.Mutex
+	tags, releases := []string{"v1.0.0"}, `[{"tag_name":"v1.0.0"}]`
+	f.graphql(func(w http.ResponseWriter, query string, vars map[string]any) {
+		mu.Lock()
+		defer mu.Unlock()
+		_, _ = w.Write(tagPage(tags, ""))
+	})
+	f.route("/repos/acme/app/releases", func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		_, _ = w.Write([]byte(releases))
+	})
+	f.text("/repos/acme/app/commits", "[]")
+	f.text("/repos/acme/app/actions/runs", `{"workflow_runs":[]}`)
+	now := date("2026-11-01T00:00:00Z")
+	repo := forge.Repo{FullName: "acme/app", Name: "app", DefaultBranch: "main", PushedAt: forge.Time{Time: date("2026-10-31T09:58:00Z")}}
+	read := func() []forge.Tag {
+		t.Helper()
+		d, err := c.FetchDetail(context.Background(), repo, now.Add(-84*24*time.Hour), 3, now)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return d.Tags
+	}
+	queries := func() int { return len(f.requests("POST /graphql")) }
+	read()
+	if got := read(); queries() != 1 || len(got) != 1 || got[0].Name != "v1.0.0" {
+		t.Errorf("pushed_at unchanged: %d tag queries, tags %v; want 1 query, the kept v1.0.0", queries(), got)
+	}
+	repo.PushedAt = forge.Time{Time: date("2026-11-01T08:00:00Z")}
+	read()
+	if queries() != 2 {
+		t.Errorf("pushed_at moved: %d tag queries, want 2", queries())
+	}
+	mu.Lock()
+	tags, releases = []string{"v1.1.0", "v1.0.0"}, `[{"tag_name":"v1.1.0"},{"tag_name":"v1.0.0"}]`
+	mu.Unlock()
+	if got := read(); queries() != 3 || len(got) != 2 || got[0].Name != "v1.1.0" {
+		t.Errorf("a release without a push: %d tag queries, tags %v; want 3, v1.1.0 first", queries(), got)
+	}
 }

@@ -1,0 +1,29 @@
+{{define "main"}}{{$v := .Data}}{{$e := $v.Form.Field}}
+<div class="bare-main narrow">
+  <section class="form-card">
+    <form class="form" method="post" action="/signin">
+      <h1>{{icon "lock"}}Sign in</h1>
+      {{if $v.Once}}<p class="callout">{{icon "key-round"}}<span>This link lets one sign-in skip the wait after too many tries.</span></p>{{end}}
+      {{template "formTop" $v.Form.Top}}
+      <div class="field">
+        <label for="username">Username</label>
+        <input type="text" class="input" id="username" autocomplete="username" autocapitalize="none" spellcheck="false" required{{with index $e "username"}} aria-invalid="true" aria-describedby="err-username"{{end}} name="username" value="{{$v.Username}}">
+        {{template "fieldErr" (dict "Name" "username" "Msg" (index $e "username"))}}
+      </div>
+      <div class="field">
+        <label for="password">Password</label>
+        <input type="password" class="input" id="password" autocomplete="current-password" required{{with index $e "password"}} aria-invalid="true"{{end}} aria-describedby="hint-password{{with index $e "password"}} err-password{{end}}" name="password" value="">
+        {{template "fieldErr" (dict "Name" "password" "Msg" (index $e "password"))}}
+      </div>
+      <div class="toggle">
+        <input type="checkbox" class="switch" id="keep" name="keep" value="on">
+        <label for="keep"><b>Keep me signed in on this device</b></label>
+      </div>
+      <input type="hidden" name="next" value="{{$v.Next}}">
+      {{with $v.Once}}<input type="hidden" name="once" value="{{.}}">{{end}}
+      <div class="form-foot"><button class="btn accent">Sign in</button></div>
+    </form>
+  </section>
+  <p class="field-hint" id="hint-password">Forgotten it? On the server run <code>forgemap <span class="nobr">-reset-password</span></code> (in Docker: <code>docker exec &lt;container&gt; forgemap <span class="nobr">-reset-password</span></code>).</p>
+</div>
+{{end}}

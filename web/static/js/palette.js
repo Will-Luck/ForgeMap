@@ -1,6 +1,6 @@
 // Command palette: Ctrl K, Cmd K or "/" (not while typing). Fuzzy subsequence
 // search over projects, ideas, open issues and commands from /api/search.json.
-import { el, icon, isTyping } from "./util.js";
+import { el, icon, isTyping, signedOut } from "./util.js";
 import { toggleTheme } from "./theme.js";
 
 const dialog = document.getElementById("palette");
@@ -20,7 +20,7 @@ function load() {
   if (index) return Promise.resolve(index);
   if (!loading) {
     loading = fetch("/api/search.json", { headers: { Accept: "application/json" } })
-      .then((r) => (r.ok ? r.json() : Promise.reject(new Error("HTTP " + r.status))))
+      .then((r) => (signedOut(r) ? Promise.reject(new Error("signed out")) : r.ok ? r.json() : Promise.reject(new Error("HTTP " + r.status))))
       .then((data) => (index = data))
       .catch((err) => {
         loading = null;
@@ -183,6 +183,16 @@ function select(i) {
   node.scrollIntoView({ block: "nearest" });
 }
 
+// A time as hh:mm in the site's time zone (the page's data-tz), else UTC.
+function siteClock(at) {
+  const opts = { hour: "2-digit", minute: "2-digit" };
+  try {
+    return new Intl.DateTimeFormat("en-GB", { ...opts, timeZone: document.body.dataset.tz || "UTC" }).format(at);
+  } catch {
+    return new Intl.DateTimeFormat("en-GB", { ...opts, timeZone: "UTC" }).format(at);
+  }
+}
+
 async function choose(it) {
   if (!it) return;
   if (it.action === "theme") {
@@ -192,17 +202,31 @@ async function choose(it) {
   }
   if (it.action === "refresh") {
     close();
+    let text = "Refresh failed: no connection.";
+    let level = "warn";
     try {
       const r = await fetch("/api/refresh", { method: "POST" });
-      document.dispatchEvent(new CustomEvent("waymark:toast", { detail: { text: r.ok ? "Refresh asked for. New data arrives live." : "Refresh failed (HTTP " + r.status + ").", level: r.ok ? "good" : "warn", icon: "refresh-cw" } }));
+      if (signedOut(r)) return;
+      const body = r.ok ? await r.json().catch(() => ({})) : {};
+      if (!r.ok) {
+        text = "Refresh failed (HTTP " + r.status + ").";
+      } else if (body.queued === false && body.last_at && body.next_at) {
+        const secs = Math.max(1, Math.ceil((Date.parse(body.next_at) - Date.now()) / 1000));
+        text = "Refreshed at " + siteClock(new Date(body.last_at)) + ". The next refresh can start in " + secs + " s.";
+        level = "good";
+      } else {
+        text = "Refresh queued.";
+        level = "good";
+      }
     } catch {
-      document.dispatchEvent(new CustomEvent("waymark:toast", { detail: { text: "Refresh failed: no connection.", level: "warn", icon: "refresh-cw" } }));
+      // No connection: the words above stand.
     }
+    document.dispatchEvent(new CustomEvent("forgemap:toast", { detail: { text, level, icon: "refresh-cw" } }));
     return;
   }
   if (it.action === "surprise") {
     close();
-    if (document.querySelector("[data-ideas]")) document.dispatchEvent(new CustomEvent("waymark:surprise"));
+    if (document.querySelector("[data-ideas]")) document.dispatchEvent(new CustomEvent("forgemap:surprise"));
     else location.href = "/ideas#surprise";
     return;
   }

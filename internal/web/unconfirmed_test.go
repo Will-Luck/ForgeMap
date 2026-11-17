@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Will-Luck/waymark/internal/model"
+	"github.com/Will-Luck/forgemap/internal/model"
 )
 
 // probeRow is the page from its first probe row on, for a short failure text.

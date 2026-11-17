@@ -2,7 +2,7 @@
 *.log
 dist/
 build/
-/waymark
+/forgemap
 /testdata/site.live.json.tmp
 .env
 .idea/

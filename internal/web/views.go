@@ -8,13 +8,14 @@ import (
 	"fmt"
 	"html/template"
 	"math"
+	"net/url"
 	"sort"
 	"strings"
 	"time"
 	"unicode/utf8"
 
-	"github.com/Will-Luck/waymark/internal/mdlite"
-	"github.com/Will-Luck/waymark/internal/model"
+	"github.com/Will-Luck/forgemap/internal/mdlite"
+	"github.com/Will-Luck/forgemap/internal/model"
 )
 
 // derived is everything computed once per snapshot. Snapshot returns an
@@ -27,6 +28,7 @@ type derived struct {
 	proj    map[string]*model.Project
 	heat    heatView
 	graph   mapView
+	head    headView
 }
 
 func (s *server) derived(site *model.Site) *derived {
@@ -46,6 +48,7 @@ func (s *server) derived(site *model.Site) *derived {
 	d.search = buildSearch(site)
 	d.heat = buildHeat(site.Heatmap)
 	d.graph = buildMap(site)
+	d.head = d.buildHead()
 	s.der = d
 	return d
 }
@@ -70,17 +73,32 @@ func buildCSS(site *model.Site) []byte {
 		fmt.Fprintf(&b, "body:has(#cat-%s:checked) .tier:not(:has(.card-wrap[data-cat=%q])){display:none}\n", c.Key, c.Key)
 		fmt.Fprintf(&b, "body:has(#cat-%s:checked) .tier .count[data-n=%q]{display:inline-block}\n", c.Key, c.Key)
 	}
-	// Ideas: a kind and size pair with no ideas shows the empty message, so
-	// the CSS-only filters say so without JS too.
-	pairs := ideaPairs(site.Ideas)
+	// Ideas: a kind, size and issue choice with no ideas shows the empty
+	// message, so the CSS-only filters say so without JS too. The issue
+	// filter (Filed, Not filed) is there only when the ideas file gave ideas.
+	counts := ideaCounts(site.Ideas)
 	kinds := []string{"all"}
 	for _, k := range ideaKinds {
 		kinds = append(kinds, k.Key)
 	}
+	filed := []string{"all"}
+	for _, i := range site.Ideas {
+		if i.Source != "issue" {
+			filed = append(filed, "yes", "no")
+			break
+		}
+	}
 	for _, k := range kinds {
 		for _, s := range append([]string{"all"}, ideaSizes...) {
-			if (k != "all" || s != "all") && pairs[[2]string{k, s}] == 0 {
-				fmt.Fprintf(&b, "body:has(#k-%s:checked):has(#s-%s:checked) .ideas-empty{display:flex}\n", k, s)
+			for _, f := range filed {
+				if (k == "all" && s == "all" && f == "all") || counts[[3]string{k, s, f}] > 0 {
+					continue
+				}
+				sel := fmt.Sprintf("body:has(#k-%s:checked):has(#s-%s:checked)", k, s)
+				if len(filed) > 1 {
+					sel += fmt.Sprintf(":has(#f-%s:checked)", f)
+				}
+				fmt.Fprintf(&b, "%s .ideas-empty{display:flex}\n", sel)
 			}
 		}
 	}
@@ -129,28 +147,55 @@ type needItem struct {
 	Cat string
 }
 
+// headView is the overview's head: the stat tiles, the week strip and Needs
+// you. The page renders it and so does /fragments/overview-head; its Hash
+// rides in every tick, so an open overview knows when to fetch it again.
+type headView struct {
+	Hash       string
+	Tiles      []tile
+	Weeks      template.HTML
+	WeeksTotal int // the week strip's sum, which its caption shows
+	Needs      []needItem
+	MoreNeeds  []needItem
+	NeedsN     int
+	// Empty: the site has no project, so the board says why (Reasons). The
+	// head carries the board's note so that its hash moves when a forge's
+	// words do, and its fragment brings the note with it (live.js).
+	Empty   bool
+	Reasons []emptyReason
+	// Managed: set up in the browser, so the empty board points to
+	// Settings. FirstRead: the first read of the forges is still running,
+	// so the head says so and the board is not called empty yet.
+	Managed, FirstRead bool
+}
+
+// emptyReason is one forge's line on the empty board: while it fails, its
+// error (and the last good list's note); else its note.
+type emptyReason struct {
+	Label, Error, Note string
+	Failing            bool
+}
+
 type overviewView struct {
-	Tiles     []tile
-	Weeks     template.HTML
-	Needs     []needItem
-	MoreNeeds []needItem
-	Groups    []eventGroup
-	Rest      []eventGroup
-	RestN     int
-	Recent    int
-	Cats      []catChip
-	Total     int
-	Tiers     []tierSection
+	Head   headView
+	Groups []eventGroup
+	Rest   []eventGroup
+	RestN  int
+	Recent int
+	Cats   []catChip
+	Total  int
+	Tiers  []tierSection
 }
 
 const needsVisible = 8
 
-func (d *derived) overview(now time.Time) overviewView {
+// buildHead makes the overview head, once per snapshot.
+func (d *derived) buildHead() headView {
 	site := d.site
 	st := site.Stats
-	v := overviewView{Total: len(site.Projects)}
 	needs := len(site.NeedsYou)
-	v.Tiles = []tile{
+	h := headView{NeedsN: needs, Managed: site.Meta.Managed, FirstRead: site.Meta.FirstRead}
+	h.Tiles = []tile{
 		{Label: "Projects", Icon: "layers", Href: "#board", Value: len(site.Projects)},
 		{Label: "Active", Icon: "zap", Href: "#tier-active", Value: st.Active, Class: "t-active"},
 		{Label: "Live", Icon: "radio", Href: "#tier-live", Value: st.Live, Class: "t-live"},
@@ -160,18 +205,66 @@ func (d *derived) overview(now time.Time) overviewView {
 		{Label: "Shipped in 30 days", Icon: "rocket", Href: "/ships", Value: st.ReleasesLast30d},
 	}
 	if needs == 0 {
-		v.Tiles[3].Href = ""
-		v.Tiles[3].Class = "needs calm"
+		h.Tiles[3].Href = ""
+		h.Tiles[3].Class = "needs calm"
 	}
-	v.Weeks = weekStrip(d.heat)
+	h.Weeks = weekStrip(d.heat)
+	h.WeeksTotal = weeksTotal(d.heat)
 	for i, a := range site.NeedsYou {
 		it := needItem{A: a, Cat: d.cat(a.Project)}
 		if i < needsVisible {
-			v.Needs = append(v.Needs, it)
+			h.Needs = append(h.Needs, it)
 		} else {
-			v.MoreNeeds = append(v.MoreNeeds, it)
+			h.MoreNeeds = append(h.MoreNeeds, it)
 		}
 	}
+	if len(site.Projects) == 0 && !site.Meta.FirstRead {
+		h.Empty = true
+		for _, s := range shownSources(site) {
+			if site.Meta.Forges[s.Name] == "" {
+				continue
+			}
+			r := emptyReason{Label: sourceLabel(s.Name, site.Meta), Error: s.Error, Note: s.Note, Failing: !s.OK}
+			if r.Failing || r.Note != "" {
+				h.Reasons = append(h.Reasons, r)
+			}
+		}
+	}
+	h.Hash = headHash(h, site)
+	return h
+}
+
+// headHash is a short hash of what the head shows and of the board's
+// membership (each project's slug and state, in order), and while the board
+// is empty of the forges' words its note shows. It moves when a tile, the
+// week strip, a Needs you item, the set of cards and their states or an
+// empty board's note does, or the first read ends, and only then: relative
+// times and the refresh time are not in it, so an unchanged head is not
+// fetched again on every tick. FirstRead is left out when false, so a file
+// install's hash is what it was.
+func headHash(h headView, site *model.Site) string {
+	board := make([]string, 0, len(site.Projects))
+	for _, p := range site.Projects {
+		board = append(board, p.Slug+" "+string(p.Tier))
+	}
+	b, err := json.Marshal(struct {
+		Tiles     []tile
+		Weeks     template.HTML
+		Needs     []needItem
+		Board     []string
+		Reasons   []emptyReason `json:",omitempty"`
+		FirstRead bool          `json:",omitempty"`
+	}{h.Tiles, h.Weeks, append(append([]needItem{}, h.Needs...), h.MoreNeeds...), board, h.Reasons, h.FirstRead})
+	if err != nil {
+		return ""
+	}
+	sum := sha256.Sum256(b)
+	return hex.EncodeToString(sum[:])[:12]
+}
+
+func (d *derived) overview(now time.Time) overviewView {
+	site := d.site
+	v := overviewView{Head: d.head, Total: len(site.Projects)}
 	ref := site.GeneratedAt
 	if ref.IsZero() {
 		ref = now
@@ -254,6 +347,15 @@ func weekStrip(h heatView) template.HTML {
 	return template.HTML(b.String())
 }
 
+// weeksTotal is the week strip's sum: the number its caption shows.
+func weeksTotal(h heatView) int {
+	n := 0
+	for _, w := range h.Weeks {
+		n += w.Count
+	}
+	return n
+}
+
 // ---- project ---------------------------------------------------------------
 
 type relItem struct {
@@ -266,6 +368,7 @@ type ideaItem struct {
 	Cat     string
 	RepoURL string
 	Forge   string // the project's primary forge, where "File as issue" goes
+	Filed   string // "yes" when the idea has an issue (a label idea always does), else "no" (filedState)
 }
 
 type projectView struct {
@@ -361,7 +464,7 @@ func (d *derived) project(p *model.Project) projectView {
 }
 
 func (d *derived) idea(i model.Idea) ideaItem {
-	it := ideaItem{I: i, Cat: d.cat(i.Project)}
+	it := ideaItem{I: i, Cat: d.cat(i.Project), Filed: filedState(i)}
 	if p := d.proj[i.Project]; p != nil {
 		it.Forge = p.Forge
 		if p.Repo != nil {
@@ -395,21 +498,84 @@ func ideaPairs(ideas []model.Idea) map[[2]string]int {
 	return n
 }
 
+// filedState says whether an idea has an issue yet ("yes" or "no"). A label
+// idea is an issue itself, so it is always "yes"; only an ideas-file idea
+// can be "no".
+func filedState(i model.Idea) string {
+	if i.Source == "issue" || i.FiledIssue > 0 || i.ExistingIssue > 0 {
+		return "yes"
+	}
+	return "no"
+}
+
+// ideaCounts counts ideas per kind, size and issue state (filedState), with
+// "all" standing for a filter left at All.
+func ideaCounts(ideas []model.Idea) map[[3]string]int {
+	n := map[[3]string]int{}
+	for _, i := range ideas {
+		f := filedState(i)
+		for _, k := range []string{i.Kind, "all"} {
+			for _, s := range []string{i.Size, "all"} {
+				for _, fs := range []string{f, "all"} {
+					n[[3]string{k, s, fs}]++
+				}
+			}
+		}
+	}
+	return n
+}
+
 type ideasView struct {
 	Ideas    []ideaItem
 	Kinds    []facet
 	Sizes    []facet
 	Projects []facet
 	Total    int
-	// Filed counts the file ideas already filed (or already issues); a label
-	// idea is an issue itself, so it is in neither count.
-	Filed   int
-	Roundup string
+	// Filed counts every idea that has an issue: each label idea, and each
+	// file idea already filed. Unfiled counts the rest (file ideas with no
+	// issue yet), so Filed plus Unfiled is Total.
+	Filed, Unfiled int
+	Roundup        string
 	// FromFile: an ideas file (the roundup) is configured or gave ideas;
 	// FromLabels: ideas came from issues labelled Labels ("idea or
 	// enhancement").
 	FromFile, FromLabels bool
 	Labels               string
+	// FileIdeas counts the ideas file's ideas; the Issue filter shows only
+	// when it is not 0 (with label ideas alone, every idea is filed).
+	FileIdeas int
+	// Sel is what a shared link asks the filters to show (selectFrom).
+	Sel ideaSel
+}
+
+// ideaSel is the Ideas filters a link asks for: a kind key, a size (S, M or
+// L), an issue state ("yes" or "no") and a project slug; "" is All.
+type ideaSel struct {
+	Kind, Size, Filed, Project string
+}
+
+// selectFrom reads ?kind=, ?size=, ?filed= and ?project= and keeps only the
+// values the page offers, so a stale or made-up link opens with that filter
+// at All and nothing of it reaches the page.
+func (v *ideasView) selectFrom(q url.Values) {
+	for _, k := range v.Kinds {
+		if k.Key == q.Get("kind") {
+			v.Sel.Kind = k.Key
+		}
+	}
+	for _, s := range v.Sizes {
+		if strings.EqualFold(s.Key, q.Get("size")) {
+			v.Sel.Size = s.Key
+		}
+	}
+	if f := q.Get("filed"); v.FileIdeas > 0 && (f == "yes" || f == "no") {
+		v.Sel.Filed = f
+	}
+	for _, p := range v.Projects {
+		if p.Key == q.Get("project") {
+			v.Sel.Project = p.Key
+		}
+	}
 }
 
 func (d *derived) ideas() ideasView {
@@ -432,9 +598,12 @@ func (d *derived) ideas() ideasView {
 			v.FromLabels = true
 		} else {
 			v.FromFile = true
-			if i.FiledIssue > 0 || i.ExistingIssue > 0 {
-				v.Filed++
-			}
+			v.FileIdeas++
+		}
+		if filedState(i) == "yes" {
+			v.Filed++
+		} else {
+			v.Unfiled++
 		}
 		if _, ok := projects[i.Project]; !ok {
 			order = append(order, i.Project)
@@ -683,6 +852,10 @@ type mapView struct {
 const (
 	mapW = 1600.0
 	mapH = 940.0
+	// mapLabelMax is the largest size app.css draws a star's label at (its
+	// step for the narrowest map), in viewBox units. separate sizes each
+	// star's box for it, so labels clear their neighbours at every width.
+	mapLabelMax = 19.5
 )
 
 // buildMap places category anchors on an ellipse and each category's nodes on
@@ -808,8 +981,8 @@ func buildMap(site *model.Site) mapView {
 }
 
 // separate pushes overlapping stars apart and keeps them on the canvas. Each
-// star owns a box: its circle plus the label under it (about 8.4 units per
-// character at the map's label size). Category names are boxes too, so stars
+// star owns a box: its circle plus the label under it (about 0.56 em per
+// character at the largest label size). Category names are boxes too, so stars
 // move around them. Each push is along the shorter overlap with a quarter of
 // it sideways, so a star wedged in a column slips out instead of jamming.
 // map.js uses the same rule with measured label widths.
@@ -820,7 +993,7 @@ func separate(ns []mapNode, anchors []mapAnchor) {
 	}
 	bs := make([]box, 0, len(ns)+len(anchors))
 	for _, n := range ns {
-		bs = append(bs, box{x: n.X, y: n.Y, hw: math.Max(n.R, 8.4*float64(utf8.RuneCountInString(n.Short))/2) + 8, hh: n.R + 15, oy: 8})
+		bs = append(bs, box{x: n.X, y: n.Y, hw: math.Max(n.R, 0.56*mapLabelMax*float64(utf8.RuneCountInString(n.Short))/2) + 8, hh: n.R + 15, oy: 8})
 	}
 	for _, a := range anchors {
 		bs = append(bs, box{x: a.X, y: a.Y, hw: 7.7*float64(utf8.RuneCountInString(a.Label)) + 12, hh: 16, oy: -7})
@@ -969,8 +1142,11 @@ func buildSearch(site *model.Site) []byte {
 		searchCommand{ID: "go-ships", Label: "Ship log", Icon: "ship", URL: "/ships"},
 		searchCommand{ID: "go-map", Label: "Map", Icon: "orbit", URL: "/map"},
 		searchCommand{ID: "theme", Label: "Toggle theme", Icon: "sun", Action: "theme"},
-		searchCommand{ID: "refresh", Label: "Refresh now", Icon: "refresh-cw", Action: "refresh"},
 	)
+	// With refreshes turned off there is none to ask for (the route is 404).
+	if !site.Meta.RefreshOff {
+		ix.Commands = append(ix.Commands, searchCommand{ID: "refresh", Label: "Refresh now", Icon: "refresh-cw", Action: "refresh"})
+	}
 	// Surprise me picks an idea on the Ideas page: with none there is nothing
 	// to pick, and with no Ideas page it would lead to a 404.
 	if len(ix.Ideas) > 0 {

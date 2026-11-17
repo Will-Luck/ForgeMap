@@ -11,7 +11,7 @@
   <p class="headline lv-{{$p.HeadlineLevel}}">{{icon (levelIcon $p.HeadlineLevel)}}<span><span class="sr">{{levelWord $p.HeadlineLevel}}: </span>{{$p.Headline}}</span></p>
   {{with $p.What}}<p class="what">{{.}}</p>{{else}}{{with $p.Summary}}<p class="what">{{.}}</p>{{end}}{{end}}
 
-  {{with $p.Hold}}<p class="callout {{if .Contradicted}}warn{{else}}hold{{end}}">{{icon (tierIcon $p)}}<span><b>{{tierLabel $p}} since {{date .Since}}.</b> {{.Reason}}{{if .Contradicted}} <b>{{plural .CommitsSince "commit" "commits"}} since then.</b>{{end}}</span></p>{{end}}
+  {{with $p.Hold}}<p class="callout {{if .Contradicted}}warn{{else}}hold{{end}}">{{icon (tierIcon $p)}}<span><b>{{holdWord .Kind}} since {{day .Since}}.</b> {{.Reason}}{{if .Contradicted}} <b>{{plural .CommitsSince "commit" "commits"}} since then.</b>{{end}}</span></p>{{end}}
 
   <div class="facts">
     {{with $p.RunsOn}}<p class="fact">{{icon "server"}}<span><b>Runs on</b> {{.}}</span></p>{{end}}
@@ -51,6 +51,7 @@
         </div>
         <div class="ubar" role="img" aria-label="Last 24 hours: {{.UptimePct}}% up">{{range uptimeCells .History}}<span class="u {{.Class}}" title="{{.Tip}}"></span>{{end}}</div>
         <p class="ubar-scale" aria-hidden="true"><span>24 h ago</span><span>now</span></p>
+        {{with uptimeNote .History}}<p class="ubar-note{{if .Down}} has-down{{end}}">{{if .Down}}{{icon "octagon-alert"}}{{else}}{{icon "check"}}{{end}}<span><b>{{.Lead}}</b>{{.Rest}}</span></p>{{end}}
       </div>
       {{end}}{{end}}
     </section>
@@ -84,7 +85,7 @@
       {{end}}{{end}}
       {{range $p.Plans}}
       <div class="plan">
-        <p class="plan-title">{{icon "list-checks"}}<span><a href="{{.URL}}">{{.Title}}</a> <span class="muted small">{{date .Date}}</span></span></p>
+        <p class="plan-title">{{icon "list-checks"}}<span><a href="{{.URL}}">{{.Title}}</a> <span class="muted small">{{day .Date}}</span></span></p>
         <div class="bar" data-pct="{{pct .Done .Total}}" role="img" aria-label="{{.Done}} of {{.Total}} steps done"><span></span></div>
         <p class="plan-num mono small">{{.Done}}/{{.Total}} done, {{pct .Done .Total}}%</p>
       </div>

@@ -6,13 +6,13 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Will-Luck/waymark/internal/forge"
-	"github.com/Will-Luck/waymark/internal/model"
-	"github.com/Will-Luck/waymark/internal/registry"
-	"github.com/Will-Luck/waymark/internal/sources/docker"
-	"github.com/Will-Luck/waymark/internal/sources/fdroid"
-	"github.com/Will-Luck/waymark/internal/sources/notes"
-	"github.com/Will-Luck/waymark/internal/sources/probe"
+	"github.com/Will-Luck/forgemap/internal/forge"
+	"github.com/Will-Luck/forgemap/internal/model"
+	"github.com/Will-Luck/forgemap/internal/registry"
+	"github.com/Will-Luck/forgemap/internal/sources/docker"
+	"github.com/Will-Luck/forgemap/internal/sources/fdroid"
+	"github.com/Will-Luck/forgemap/internal/sources/notes"
+	"github.com/Will-Luck/forgemap/internal/sources/probe"
 )
 
 // Env is the clock and place every rule is evaluated in.
@@ -116,6 +116,9 @@ type Built struct {
 	// keeps the newest 8.
 	AllReleases []model.Release
 	FP          Fingerprint
+	// Warnings are for the log (SiteOutput.Warnings): a projects-file url
+	// left out because it repeats a link the project has already.
+	Warnings []string
 }
 
 type commitRef struct {
@@ -247,12 +250,17 @@ func BuildProject(env Env, in Input) Built {
 	}
 	// A project with no repo read in full (a server, a network, a hardware
 	// job, or a GitHub repo without a token) has no commits: its notes are
-	// the work record.
+	// the work record. activityDay is what DaysAgo counts from: a date-only
+	// note's stamp is the start of its date in the site's zone.
 	fromNotes := len(rp.FullRepos()) == 0 || in.NoDetail
+	activityDay := tierCommit
 	if fromNotes {
 		for _, n := range in.Notes {
 			if n.Modified.After(tierCommit) {
-				tierCommit = n.Modified
+				tierCommit, activityDay = n.Modified, n.Modified
+				if n.ModifiedDateOnly {
+					activityDay = dayIn(n.Modified, loc)
+				}
 			}
 		}
 	}
@@ -552,8 +560,12 @@ func BuildProject(env Env, in Input) Built {
 				written = endOfDay(written, loc)
 			}
 			if c, lower := win.countAfter(written); c > 0 {
+				day := ShortDate(n.Modified, now, loc)
+				if n.ModifiedDateOnly {
+					day = ShortDay(n.Modified, now, loc)
+				}
 				ni.Stale = true
-				ni.StaleReason = "Written " + ShortDate(n.Modified, now, loc) + "; " + fmtCommits(c, lower) + " since"
+				ni.StaleReason = "Written " + day + "; " + fmtCommits(c, lower) + " since"
 			}
 		}
 		p.Notes = append(p.Notes, ni)
@@ -563,29 +575,46 @@ func BuildProject(env Env, in Input) Built {
 	p.Signals = signals(p, dep, running, ri, in.Mirror, mirrorName, ciLatest, holdLower, in.FDroidIndexRead)
 
 	// Headline and actions.
-	p.Headline, p.HeadlineLevel = headline(env, p, dep, containerDown, primaryC, downProbes, ciFailing, ciLatestDone, holdLower, !tierKnown, fromNotes)
+	p.Headline, p.HeadlineLevel = headline(env, p, dep, containerDown, primaryC, downProbes, ciFailing, ciLatestDone, holdLower, !tierKnown, fromNotes, activityDay)
 	if p.Tier != model.TierArchived {
 		p.Actions = actions(env, p, in, dep, containerDown, primaryC, downProbes, since, holdLower, lastCommit)
 	}
 	SortActions(p.Actions)
 
-	// Links and sources.
+	// Links and sources. A projects-file url that repeats a link already
+	// here (often the repo or its mirror) is left out, and logged so the
+	// projects file can be tidied; the first link keeps its label and kind.
+	linked := map[string]string{} // linkKey -> the label of the link that has it
+	addLink := func(l model.Link) {
+		linked[linkKey(l.URL)] = l.Label
+		p.Links = append(p.Links, l)
+	}
 	if ri != nil && ri.HTMLURL != "" {
-		p.Links = append(p.Links, model.Link{Label: p.Forge, URL: ri.HTMLURL, Kind: "repo"})
+		addLink(model.Link{Label: p.Forge, URL: ri.HTMLURL, Kind: "repo"})
 	}
 	mirrorKind := "mirror"
 	if env.ForgeKinds[mirrorForge] == "github" {
 		mirrorKind = "github"
 	}
 	if p.GitHub != nil && p.GitHub.HTMLURL != "" {
-		p.Links = append(p.Links, model.Link{Label: mirrorName, URL: p.GitHub.HTMLURL, Kind: mirrorKind})
+		addLink(model.Link{Label: mirrorName, URL: p.GitHub.HTMLURL, Kind: mirrorKind})
 	} else if in.MirrorURL != "" {
-		p.Links = append(p.Links, model.Link{Label: mirrorName, URL: in.MirrorURL, Kind: mirrorKind})
+		addLink(model.Link{Label: mirrorName, URL: in.MirrorURL, Kind: mirrorKind})
 	}
+	var warnings []string
 	for _, u := range rp.URLs {
-		if u.URL != "" {
-			p.Links = append(p.Links, model.Link{Label: u.Label, URL: u.URL, Kind: "live"})
+		if u.URL == "" {
+			continue
 		}
+		if label, dup := linked[linkKey(u.URL)]; dup {
+			what := "an earlier link"
+			if label != "" {
+				what = "the " + label + " link"
+			}
+			warnings = append(warnings, "project "+p.Slug+": projects-file url "+u.URL+" repeats "+what+", left out")
+			continue
+		}
+		addLink(model.Link{Label: u.Label, URL: u.URL, Kind: "live"})
 	}
 	if p.Unreleased != nil && p.Unreleased.URL != "" {
 		p.Links = append(p.Links, model.Link{Label: "Changelog", URL: p.Unreleased.URL, Kind: "docs"})
@@ -630,7 +659,7 @@ func BuildProject(env Env, in Input) Built {
 	}
 	normalizeProject(&p)
 	p.Hash = Hash(p)
-	return Built{Project: p, AllReleases: allReleases, FP: fp}
+	return Built{Project: p, AllReleases: allReleases, FP: fp, Warnings: warnings}
 }
 
 func tagDate(tg forge.Tag, rels map[string]forge.Release) time.Time {
@@ -801,21 +830,19 @@ func signals(p model.Project, dep *model.DeployInfo, running bool, ri *model.Rep
 			break
 		}
 	}
-	if h := p.Hold; h != nil {
+	// A hold the commits agree with needs no chip: the badge says On hold and
+	// its icon gives the kind. One with commits since asks whether it still holds.
+	if h := p.Hold; h != nil && h.Contradicted {
 		icon := "pause"
 		if h.Kind == "frozen" {
 			icon = "snowflake"
 		}
-		if h.Contradicted {
-			add("hold", model.LevelWarn, icon, "Still "+strings.ToLower(holdWord(h.Kind))+"? "+fmtCommits(h.CommitsSince, holdLower)+" since", "")
-		} else {
-			add("hold", model.LevelInfo, icon, holdWord(h.Kind), "")
-		}
+		add("hold", model.LevelWarn, icon, "Still "+strings.ToLower(model.HoldWord(h.Kind))+"? "+fmtCommits(h.CommitsSince, holdLower)+" since", "")
 	}
 	return s
 }
 
-func headline(env Env, p model.Project, dep *model.DeployInfo, containerDown bool, pc *ContainerRef, down []ProbeData, ciFailing bool, ciDone *forge.Run, holdLower, giteaPending, fromNotes bool) (string, model.Level) {
+func headline(env Env, p model.Project, dep *model.DeployInfo, containerDown bool, pc *ContainerRef, down []ProbeData, ciFailing bool, ciDone *forge.Run, holdLower, giteaPending, fromNotes bool, activityDay time.Time) (string, model.Level) {
 	now, loc := env.Now, env.Loc
 	last, none := "Last commit ", ", no commits yet"
 	if fromNotes {
@@ -842,9 +869,9 @@ func headline(env Env, p model.Project, dep *model.DeployInfo, containerDown boo
 		}
 		return dep.Latest + " is ready; production runs " + dep.Version, model.LevelWarn
 	case p.Hold != nil && p.Hold.Contradicted:
-		return holdWord(p.Hold.Kind) + " since " + ShortDate(p.Hold.Since, now, loc) + ", but " + fmtCommits(p.Hold.CommitsSince, holdLower) + " since", model.LevelWarn
+		return model.HoldWord(p.Hold.Kind) + " since " + ShortDay(p.Hold.Since, now, loc) + ", but " + fmtCommits(p.Hold.CommitsSince, holdLower) + " since", model.LevelWarn
 	case p.Hold != nil:
-		s := holdWord(p.Hold.Kind) + " since " + ShortDate(p.Hold.Since, now, loc)
+		s := model.HoldWord(p.Hold.Kind) + " since " + ShortDay(p.Hold.Since, now, loc)
 		if p.Hold.Reason != "" {
 			s += ": " + p.Hold.Reason
 		}
@@ -852,7 +879,7 @@ func headline(env Env, p model.Project, dep *model.DeployInfo, containerDown boo
 	case p.Tier == model.TierActive && p.Repo != nil && p.Repo.LatestTag != "" && p.Repo.CommitsSinceTag > 0:
 		return fmtCommits(p.Repo.CommitsSinceTag, p.Repo.CommitsSinceTagCapped) + " since " + p.Repo.LatestTag, model.LevelGood
 	case p.Tier == model.TierActive:
-		return last + DaysAgo(p.LastActivity, now, loc), model.LevelGood
+		return last + DaysAgo(activityDay, now, loc), model.LevelGood
 	case p.Tier == model.TierLive:
 		what := "Answering"
 		if dep != nil && (dep.State == "running" || dep.State == "published") {
@@ -869,7 +896,7 @@ func headline(env Env, p model.Project, dep *model.DeployInfo, containerDown boo
 		}
 		return what + ", quiet for " + For(p.LastActivity, now), model.LevelGood
 	case p.Tier == model.TierQuiet:
-		return last + DaysAgo(p.LastActivity, now, loc), model.LevelInfo
+		return last + DaysAgo(activityDay, now, loc), model.LevelInfo
 	}
 	return p.TierReason, model.LevelInfo
 }
@@ -897,10 +924,21 @@ const ProbeConfirmChecks = 2
 // confirmation).
 const ContainerConfirmAfter = 2 * time.Minute
 
+// ProbeInterval is how often each probe is checked: internal/app's
+// ProbeEvery (TestProbeRunGapFollowsProbeEvery keeps the two equal).
+const ProbeInterval = 2 * time.Minute
+
+// ProbeRunGap is the widest gap between two failed checks that still counts
+// them as in a row: 2.5 probe intervals. After a longer gap (ForgeMap
+// restarted, or its host slept) the newer failure is a first failure again.
+const ProbeRunGap = ProbeInterval * 5 / 2
+
 // failRun is the run of failed checks a probe's last result ends: how many
 // of its newest checks failed in a row, and when the first of them was
-// made. The last result counts once, whether or not the history holds it
-// yet (the collector keeps the result just before it writes the point).
+// made. Two failed checks are in a row only when no more than ProbeRunGap
+// apart. The last result counts once, whether or not the history holds it
+// yet (the collector keeps the result just before it writes the point), and
+// a history point at the same time as the last result is that result.
 func failRun(pd ProbeData) (n int, first time.Time) {
 	if pd.Last == nil || pd.Last.Up || pd.Last.Refused {
 		return 0, time.Time{}
@@ -911,7 +949,7 @@ func failRun(pd ProbeData) (n int, first time.Time) {
 		if !pt.At.Before(pd.Last.At) {
 			continue // the last result itself
 		}
-		if pt.Up {
+		if pt.Up || first.Sub(pt.At) > ProbeRunGap {
 			break
 		}
 		n, first = n+1, pt.At
@@ -937,10 +975,40 @@ func probeConfirmed(prev *Fingerprint, pd ProbeData) bool {
 		return true
 	}
 	if pd.Homepage {
-		return false
+		return countedAcrossGaps(pd)
 	}
 	up, ok := prevProbe(prev, pd.Label)
 	return ok && !up
+}
+
+// countedAcrossGaps reports whether a failing probe's checks already
+// counted it as down before a gap of more than ProbeRunGap (a restart): no
+// check has answered since, and ProbeConfirmChecks of its failed checks
+// were in a row. A homepage has no stored state, so its history stands in
+// for one. A history point at the same time as the check after it is that
+// check (two passes on one clock).
+func countedAcrossGaps(pd ProbeData) bool {
+	if pd.Last == nil || pd.Last.Up || pd.Last.Refused {
+		return false
+	}
+	n, newer := 1, pd.Last.At
+	for i := len(pd.History) - 1; i >= 0; i-- {
+		pt := pd.History[i]
+		if !pt.At.Before(newer) {
+			continue
+		}
+		if pt.Up {
+			return false
+		}
+		if newer.Sub(pt.At) > ProbeRunGap {
+			n = 0
+		}
+		n, newer = n+1, pt.At
+		if n >= ProbeConfirmChecks {
+			return true
+		}
+	}
+	return false
 }
 
 // heldProbe is the first projects-file probe whose failure is not
@@ -1062,7 +1130,7 @@ func actions(env Env, p model.Project, in Input, dep *model.DeployInfo, containe
 		}
 	}
 	if h := p.Hold; h != nil && h.Contradicted {
-		add("Confirm", "Still "+strings.ToLower(holdWord(h.Kind))+"? "+fmtCommits(h.CommitsSince, holdLower)+" since "+ShortDate(h.Since, now, loc),
+		add("Confirm", "Still "+strings.ToLower(model.HoldWord(h.Kind))+"? "+fmtCommits(h.CommitsSince, holdLower)+" since "+ShortDay(h.Since, now, loc),
 			"Projects file hold vs "+p.Forge+" commits", model.LevelWarn, lastCommit, "", false)
 	}
 	n := 0
@@ -1089,6 +1157,18 @@ func forgeName(env Env, id string) string {
 		return n
 	}
 	return ForgeName(env.ForgeKinds[id], "")
+}
+
+// linkKey is a link's URL as links are compared: scheme and host in lower
+// case, trailing slashes trimmed. Path, query and fragment keep their case
+// (/Docs and /docs can be two pages).
+func linkKey(raw string) string {
+	s := strings.TrimSpace(raw)
+	if u, err := url.Parse(s); err == nil && u.Host != "" {
+		u.Scheme, u.Host = strings.ToLower(u.Scheme), strings.ToLower(u.Host)
+		s = u.String()
+	}
+	return strings.TrimRight(s, "/")
 }
 
 // forgeNeeds adds the actions the forges flag as waiting on the user, one per

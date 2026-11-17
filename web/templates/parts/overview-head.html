@@ -1,0 +1,32 @@
+{{define "overviewHead"}}<div data-live-head="overview" data-hash="{{.Hash}}">{{if .FirstRead}}
+  <p class="callout first-read" role="status">{{icon "loader-circle"}}<span><b>Reading your forges for the first time.</b> Projects appear here when it is done.</span></p>{{end}}
+  <section class="hero" aria-label="At a glance">
+    <ul class="stats">
+      {{range .Tiles}}<li>{{if .Href}}<a class="stat {{.Class}}" href="{{.Href}}">{{else}}<span class="stat {{.Class}}">{{end}}
+        <span class="stat-label">{{icon .Icon}}{{.Label}}</span>
+        <span class="stat-num">{{num .Value}}</span>
+        {{with .Note}}<span class="stat-note">{{.}}</span>{{end}}
+      {{if .Href}}</a>{{else}}</span>{{end}}</li>{{end}}
+    </ul>
+    {{with .Weeks}}<a class="weeks-link" href="/ships" aria-label="Commits per week for the last 53 weeks. Open the ship log.">{{.}}</a>
+    <p class="weeks-cap">Commits per week, last 12 months: <b>{{num $.WeeksTotal}}</b></p>{{end}}
+  </section>
+  {{if .Needs}}
+  <section id="needs-you" class="block needs-sec" aria-labelledby="needs-h">
+    <h2 id="needs-h" class="sec-h">{{icon "hand"}}Needs you <span class="count">{{.NeedsN}}</span></h2>
+    <div class="needs-grid">{{range .Needs}}{{template "need" .}}{{end}}</div>
+    {{with .MoreNeeds}}<details class="more"><summary>{{icon "chevron-down" "chev"}}Show {{len .}} more</summary><div class="needs-grid">{{range .}}{{template "need" .}}{{end}}</div></details>{{end}}
+  </section>
+  {{end}}
+</div>{{end}}
+
+{{/* The empty board's note: the page draws it on the board, and the head's
+fragment brings it along (overviewHeadLive), so live.js keeps it current. */}}
+{{define "boardEmpty"}}{{if .Empty}}<div class="ideas-empty show board-empty" data-board-empty>{{icon "compass"}}<div>
+      <p><b>Nothing to show yet</b></p>
+      <ul>{{range .Reasons}}<li><b>{{.Label}}</b> {{if .Failing}}{{.Error}}{{with .Note}}. {{.}}{{end}}{{else}}{{.Note}}{{end}}</li>{{end}}</ul>
+      {{if .Managed}}<p>Choose what is tracked in <b>Settings</b>.</p>{{else}}<p><a href="https://github.com/Will-Luck/forgemap/wiki/Installation">Installation</a> says how to choose what is tracked.</p>{{end}}
+    </div></div>{{end}}{{end}}
+
+{{/* What /fragments/overview-head serves. */}}
+{{define "overviewHeadLive"}}{{template "overviewHead" .}}{{template "boardEmpty" .}}{{end}}

@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/Will-Luck/waymark/internal/forge"
+	"github.com/Will-Luck/forgemap/internal/forge"
 )
 
 // FetchDetail reads tags, releases, open issues and PRs, the commit window and

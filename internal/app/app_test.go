@@ -19,14 +19,21 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Will-Luck/waymark/internal/config"
-	"github.com/Will-Luck/waymark/internal/demo"
-	"github.com/Will-Luck/waymark/internal/forge"
-	"github.com/Will-Luck/waymark/internal/model"
-	"github.com/Will-Luck/waymark/internal/registry"
+	"github.com/Will-Luck/forgemap/internal/config"
+	"github.com/Will-Luck/forgemap/internal/demo"
+	"github.com/Will-Luck/forgemap/internal/forge"
+	"github.com/Will-Luck/forgemap/internal/model"
+	"github.com/Will-Luck/forgemap/internal/registry"
 )
 
 var fixedNow = time.Date(2026, 10, 31, 22, 0, 0, 0, time.UTC)
+
+// TestMain lets forge reads retry at once: tests serve 502, 503 and 504
+// answers on purpose, and real waits would cost seconds each.
+func TestMain(m *testing.M) {
+	forge.RetryWaits = []time.Duration{0, 0}
+	os.Exit(m.Run())
+}
 
 const td = "../../testdata/"
 
@@ -106,7 +113,7 @@ func newWorld(t *testing.T) *world {
 			w.leak("non-GET " + r.Method + " " + p)
 		}
 		switch {
-		case p == "/api/v1/user/repos" && w.listFail.Load(),
+		case (p == "/api/v1/user/repos" || p == "/api/v1/orgs/acme/repos") && w.listFail.Load(),
 			strings.Contains(p, "/raw/") && w.rawFail.Load():
 			http.Error(rw, "boom", http.StatusInternalServerError)
 		case edited:
@@ -135,9 +142,9 @@ func newWorld(t *testing.T) *world {
 			{ID: "gitea", Type: "gitea", URL: w.srv.URL, Token: "test-token", Owners: []string{"acme"}, Heatmap: true},
 			{ID: "github", Type: "github", URL: w.srv.URL},
 		},
-		Projects: config.FileRef{Forge: "gitea", Repo: "acme/waymark-config", Path: "projects.yaml"},
-		Ideas: config.Ideas{Labels: []string{"idea", "enhancement"}, Marker: "waymark-idea:",
-			File: config.FileRef{Forge: "gitea", Repo: "acme/waymark-config", Path: "ideas.json"}},
+		Projects: config.FileRef{Forge: "gitea", Repo: "acme/forgemap-config", Path: "projects.yaml"},
+		Ideas: config.Ideas{Labels: []string{"idea", "enhancement"}, Marker: "forgemap-idea:",
+			File: config.FileRef{Forge: "gitea", Repo: "acme/forgemap-config", Path: "ideas.json"}},
 		Notes:  config.Notes{Type: "claude-memory", Dir: td + "notes"},
 		Plans:  config.Plans{Dirs: []string{"docs/plans"}},
 		Docker: config.Docker{Feed: filepath.Join(w.feedDir, "docker.json"), Label: "web-01"},
@@ -291,7 +298,7 @@ func TestRunOnceAgainstFixtures(t *testing.T) {
 	if find(site, "old-site").Tier != model.TierArchived {
 		t.Error("old-site is retired")
 	}
-	if site.ProjectBySlug("waymark-config") != nil {
+	if site.ProjectBySlug("forgemap-config") != nil {
 		t.Error("hidden repo shown")
 	}
 	if len(site.Heatmap.Days) != 371 {
@@ -446,7 +453,7 @@ func TestOutageDoesNotRepublishEachPoll(t *testing.T) {
 	}
 }
 
-// Gitea unreachable when Waymark starts (a host reboot, Gitea still coming
+// Gitea unreachable when ForgeMap starts (a host reboot, Gitea still coming
 // up): tiers worked out without commit data must not become events, either
 // when the store is empty or after a good run.
 func TestGiteaDownAtStartEmitsNoTierEvents(t *testing.T) {
@@ -536,7 +543,7 @@ func TestRefreshIsRateLimited(t *testing.T) {
 	w := newWorld(t)
 	ctx := context.Background()
 	for i := 0; i < 3; i++ {
-		if err := w.app.Refresh(ctx); err != nil {
+		if _, err := w.app.Refresh(ctx); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -545,7 +552,7 @@ func TestRefreshIsRateLimited(t *testing.T) {
 	}
 	<-w.app.refreshCh
 	w.app.now = func() time.Time { return fixedNow.Add(RefreshInterval) }
-	_ = w.app.Refresh(ctx)
+	_, _ = w.app.Refresh(ctx)
 	if n := len(w.app.refreshCh); n != 1 {
 		t.Errorf("after the interval, queued = %d, want 1", n)
 	}
@@ -795,7 +802,7 @@ func TestGiteaRefreshTriggers(t *testing.T) {
 		t.Fatal(err)
 	}
 	const (
-		list      = "/api/v1/user/repos"
+		list      = "/api/v1/orgs/acme/repos"
 		tags      = "/api/v1/repos/acme/beacon/tags"
 		changelog = "/api/v1/repos/acme/beacon/raw/CHANGELOG.md"
 		runs      = "/api/v1/repos/acme/beacon/actions/runs"
@@ -875,18 +882,35 @@ type acmeHost struct {
 	// missing are owners no GitHub forge of the host has: /users/<o>/repos
 	// answers 404 (as /orgs/<o>/repos does for any owner here).
 	missing map[string]bool
+	// fail makes every request of a forge id answer with this status and
+	// body.
+	fail map[string]acmeFail
+	// hold, when set for a forge id, keeps its repo-list requests
+	// (/user/repos) waiting until the channel is closed.
+	hold map[string]chan struct{}
+	// status makes every request whose "<forge id> <method> <path>" contains
+	// a key answer that status, until the key is deleted.
+	status map[string]int
+	// remaining, when set for a forge, is its rate allowance: each request
+	// spends one and its answer says how many are left (resetting at
+	// limitReset); a request with none left is refused with 403, and
+	// refused counts those.
+	remaining map[string]int
+	refused   map[string]int
 }
 
 type acmeRepo struct {
 	Owner, Name string
 	Private     bool
+	Fork        bool
 	Stars       int
 	Issues      []acmeIssue // open issues
 	PRs         []acmeIssue // open pull requests
 	Tags        []string    // newest first; the newest is on the newest commit
 	CI          string      // conclusion of the newest run on main; "" = no runs
+	Running     bool        // GitHub: the newest run is still in progress
 	Updated     time.Time   // also the newest commit's date
-	// Filed are the marker lines ("waymark-idea:<id>") of the file ideas filed
+	// Filed are the marker lines ("forgemap-idea:<id>") of the file ideas filed
 	// as issues here, #50 onwards; the issue search finds them.
 	Filed   []string
 	Website string // the repo's website (Gitea) or homepage (GitHub)
@@ -899,11 +923,17 @@ type acmeIssue struct {
 	Labels  []string
 }
 
+// acmeFail is an answer a forge gives to every request.
+type acmeFail struct {
+	status int
+	body   string
+}
+
 // The token user on every forge of the host.
 const acmeLogin = "acme"
 
 func newAcmeHost(t *testing.T) *acmeHost {
-	h := &acmeHost{t: t, kind: map[string]string{}, repos: map[string][]*acmeRepo{}, down: map[string]bool{}, ua: map[string]bool{}, limit: map[string]string{}, missing: map[string]bool{}}
+	h := &acmeHost{t: t, kind: map[string]string{}, repos: map[string][]*acmeRepo{}, down: map[string]bool{}, ua: map[string]bool{}, limit: map[string]string{}, missing: map[string]bool{}, fail: map[string]acmeFail{}, hold: map[string]chan struct{}{}, status: map[string]int{}, remaining: map[string]int{}, refused: map[string]int{}}
 	h.srv = httptest.NewServer(http.HandlerFunc(h.serve))
 	t.Cleanup(h.srv.Close)
 	return h
@@ -940,8 +970,8 @@ func (h *acmeHost) requests(id, sub string) []string {
 // ideas labels, no ideas file, the default marker).
 func (h *acmeHost) config(mod func(*config.Config), forges ...config.Forge) config.Config {
 	cfg := config.Config{
-		DataDir: h.t.TempDir(), Site: config.Site{Title: "Waymark", Timezone: "UTC"}, IncludePrivate: true, Forges: forges,
-		Ideas: config.Ideas{Marker: "waymark-idea:"}, Notes: config.Notes{Type: "none"}, Plans: config.Plans{Dirs: []string{"docs/plans"}},
+		DataDir: h.t.TempDir(), Site: config.Site{Title: "ForgeMap", Timezone: "UTC"}, IncludePrivate: true, Forges: forges,
+		Ideas: config.Ideas{Marker: "forgemap-idea:"}, Notes: config.Notes{Type: "none"}, Plans: config.Plans{Dirs: []string{"docs/plans"}},
 		Docker: config.Docker{Label: "Docker"},
 	}
 	if mod != nil {
@@ -998,18 +1028,44 @@ func (h *acmeHost) serve(w http.ResponseWriter, r *http.Request) {
 	h.log = append(h.log, id+" "+r.Method+" "+rest)
 	h.ua[r.UserAgent()] = true
 	kind, down := h.kind[id], h.down[id]
+	failure, failing := h.fail[id]
+	gate := h.hold[id]
 	limited := false
 	if sub, ok := h.limit[id]; ok && strings.Contains(r.Method+" "+rest, sub) {
 		delete(h.limit, id)
 		limited = true
 	}
 	reset := strconv.FormatInt(h.limitReset.Unix(), 10)
+	left, metered := h.remaining[id]
+	refuse := metered && left == 0
+	switch {
+	case refuse:
+		h.refused[id]++
+	case metered:
+		left--
+		h.remaining[id] = left
+	}
+	failWith := 0
+	for sub, code := range h.status {
+		if strings.Contains(id+" "+r.Method+" "+rest, sub) {
+			failWith = code
+		}
+	}
+	total := "" // a Gitea repo list's X-Total-Count
 	var body any
 	if !down {
 		page := "https://" + id + ".example.com/"
 		switch kind {
 		case "gitea":
-			body = giteaAnswer(strings.TrimPrefix(rest, "/api/v1"), h.repos[id], page)
+			p := strings.TrimPrefix(rest, "/api/v1")
+			body = giteaAnswer(p, h.repos[id], page)
+			// A repo list says its length and has one page.
+			if list, ok := body.([]any); ok && strings.HasSuffix(p, "/repos") {
+				total = strconv.Itoa(len(list))
+				if n, _ := strconv.Atoi(r.URL.Query().Get("page")); n > 1 {
+					body = []any{}
+				}
+			}
 		case "github":
 			var q struct {
 				Query     string         `json:"query"`
@@ -1025,17 +1081,32 @@ func (h *acmeHost) serve(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	h.mu.Unlock()
+	if gate != nil && strings.HasSuffix(rest, "/user/repos") {
+		<-gate // the request is logged above, so a test sees it arrive
+	}
+	if metered {
+		w.Header().Set("X-RateLimit-Remaining", strconv.Itoa(left))
+		w.Header().Set("X-RateLimit-Reset", reset)
+	}
 	switch {
-	case limited:
+	case failing:
+		w.WriteHeader(failure.status)
+		_, _ = w.Write([]byte(failure.body))
+	case limited || refuse:
 		w.Header().Set("X-RateLimit-Remaining", "0")
 		w.Header().Set("X-RateLimit-Reset", reset)
 		w.WriteHeader(http.StatusForbidden)
 	case down:
 		http.Error(w, "boom", http.StatusInternalServerError)
+	case failWith != 0:
+		http.Error(w, http.StatusText(failWith), failWith)
 	case body == nil:
 		w.WriteHeader(http.StatusNotFound)
 		_, _ = w.Write([]byte(`{"message":"Not Found"}`))
 	default:
+		if total != "" {
+			w.Header().Set("X-Total-Count", total)
+		}
 		_ = json.NewEncoder(w).Encode(body)
 	}
 }
@@ -1100,7 +1171,7 @@ func releasesJSON(r *acmeRepo, page string) []any {
 func giteaAnswer(path string, repos []*acmeRepo, page string) any {
 	repoJSON := func(i int, r *acmeRepo) map[string]any {
 		return map[string]any{
-			"id": i + 1, "name": r.Name, "full_name": r.full(), "owner": map[string]any{"login": r.Owner}, "private": r.Private,
+			"id": i + 1, "name": r.Name, "full_name": r.full(), "owner": map[string]any{"login": r.Owner}, "private": r.Private, "fork": r.Fork,
 			"html_url": page + r.full(), "default_branch": "main", "stars_count": r.Stars, "open_issues_count": len(r.Issues),
 			"open_pr_counter": len(r.PRs), "release_counter": len(r.Tags), "has_actions": r.CI != "", "updated_at": stamp(r.Updated),
 			"website": r.Website,
@@ -1124,6 +1195,15 @@ func giteaAnswer(path string, repos []*acmeRepo, page string) any {
 				is := issueJSON(acmeIssue{N: 50 + i, Title: "Filed idea", Updated: r.Updated}, page+r.full()+"/issues/"+strconv.Itoa(50+i), false)
 				is["body"], is["repository"] = "From the ideas list.\n"+line, map[string]any{"full_name": r.full()}
 				out = append(out, is)
+			}
+		}
+		return out
+	}
+	if o, ok := listOwner(path); ok {
+		out := []any{}
+		for i, r := range repos {
+			if strings.EqualFold(r.Owner, o) {
+				out = append(out, repoJSON(i, r))
 			}
 		}
 		return out
@@ -1187,11 +1267,23 @@ func giteaAnswer(path string, repos []*acmeRepo, page string) any {
 	return nil
 }
 
+// listOwner is the owner an /orgs/{o}/repos or /users/{o}/repos path lists.
+func listOwner(path string) (string, bool) {
+	for _, pre := range []string{"/orgs/", "/users/"} {
+		if o, ok := strings.CutPrefix(path, pre); ok {
+			if o, ok = strings.CutSuffix(o, "/repos"); ok && !strings.Contains(o, "/") {
+				return o, true
+			}
+		}
+	}
+	return "", false
+}
+
 // githubAnswer is the GitHub API's answer, nil for a 404.
 func githubAnswer(method, path, query string, vars map[string]any, repos []*acmeRepo, page string) any {
 	repoJSON := func(r *acmeRepo) map[string]any {
 		return map[string]any{
-			"id": 1, "name": r.Name, "full_name": r.full(), "owner": map[string]any{"login": r.Owner}, "private": r.Private,
+			"id": 1, "name": r.Name, "full_name": r.full(), "owner": map[string]any{"login": r.Owner}, "private": r.Private, "fork": r.Fork,
 			"html_url": page + r.full(), "default_branch": "main", "stargazers_count": r.Stars,
 			"open_issues_count": len(r.Issues) + len(r.PRs), "updated_at": stamp(r.Updated), "pushed_at": stamp(r.Updated),
 			"homepage": r.Website,
@@ -1281,8 +1373,12 @@ func githubAnswer(method, path, query string, vars map[string]any, repos []*acme
 	case "actions/runs":
 		runs := []any{}
 		if r.CI != "" {
+			status, conclusion := "completed", r.CI
+			if r.Running {
+				status, conclusion = "in_progress", ""
+			}
 			runs = append(runs, map[string]any{"id": 1, "display_title": "Build", "path": ".github/workflows/ci.yml", "head_branch": "main",
-				"status": "completed", "conclusion": r.CI, "html_url": page + r.full() + "/actions/runs/1",
+				"status": status, "conclusion": conclusion, "html_url": page + r.full() + "/actions/runs/1",
 				"run_started_at": stamp(r.Updated), "updated_at": stamp(r.Updated)})
 		}
 		return map[string]any{"workflow_runs": runs}
@@ -1480,7 +1576,7 @@ func TestIncludePrivateFalseHidesEverywhere(t *testing.T) {
 		for _, include := range []bool{true, false} {
 			h := newAcmeHost(t)
 			g := h.forge("gitea", "gitea", "t1", []string{"acme"}, &acmeRepo{Owner: "acme", Name: "tool", Updated: fixedNow.Add(-day)},
-				&acmeRepo{Owner: "acme", Name: "secret", Private: true, Filed: []string{"waymark-idea:tool-01"}, Updated: fixedNow.Add(-day)})
+				&acmeRepo{Owner: "acme", Name: "secret", Private: true, Filed: []string{"forgemap-idea:tool-01"}, Updated: fixedNow.Add(-day)})
 			file := filepath.Join(t.TempDir(), "ideas.json")
 			if err := os.WriteFile(file, []byte(`{"roundup_date":"2026-10-31","ideas":[{"id":"tool-01","project":"tool","title":"Sleep timer"}]}`), 0o644); err != nil {
 				t.Fatal(err)
@@ -1637,7 +1733,7 @@ func TestOwnerWithNoReposLoggedOnce(t *testing.T) {
 	if n := strings.Count(logged.String(), "owner acmee"); n != 1 {
 		t.Errorf("the unmatched owner was logged %d times, want once:\n%s", n, logged.String())
 	}
-	if !strings.Contains(logged.String(), "forge gitea: owner acmee") || strings.Contains(logged.String(), "owner acme ") {
+	if !strings.Contains(logged.String(), "forge gitea: owner acmee has no repos the token can see, or no such owner") || strings.Contains(logged.String(), "owner acme ") {
 		t.Errorf("log:\n%s", logged.String())
 	}
 }

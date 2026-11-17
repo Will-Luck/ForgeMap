@@ -6,7 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/Will-Luck/waymark/internal/registry"
+	"github.com/Will-Luck/forgemap/internal/registry"
 )
 
 // Cache files in DATA_DIR hold the last good bytes of the projects file and

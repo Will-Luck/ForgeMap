@@ -8,9 +8,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Will-Luck/waymark/internal/forge"
-	"github.com/Will-Luck/waymark/internal/model"
-	"github.com/Will-Luck/waymark/internal/registry"
+	"github.com/Will-Luck/forgemap/internal/forge"
+	"github.com/Will-Luck/forgemap/internal/model"
+	"github.com/Will-Luck/forgemap/internal/registry"
 )
 
 // SiteInput is everything Assemble needs.
@@ -52,6 +52,7 @@ func Assemble(in SiteInput) SiteOutput {
 	for i, pi := range in.Projects {
 		builds[i] = BuildProject(in.Env, pi)
 		bySlug[pi.Project.Slug] = i
+		out.Warnings = append(out.Warnings, builds[i].Warnings...)
 	}
 
 	// Relations, both ends.

@@ -52,6 +52,9 @@ type Repo struct {
 	ReleaseCount int  `json:"release_counter"`
 	HasActions   bool `json:"has_actions"`
 	UpdatedAt    Time `json:"updated_at"`
+	// PushedAt is GitHub's last push (zero on Gitea, whose listing has none);
+	// the GitHub client keeps a repo's tags until it moves.
+	PushedAt Time `json:"pushed_at"`
 }
 
 type Tag struct {

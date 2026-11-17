@@ -1,4 +1,4 @@
-# Identity only, never state: Waymark derives the rest.
+# Identity only, never state: ForgeMap derives the rest.
 owner: acme
 categories:
   - {key: services, label: Services, icon: server, hue: 150}
@@ -6,7 +6,7 @@ categories:
   - {key: mobile, label: Mobile, icon: smartphone, hue: 300}
   - {key: tools, label: Tools, icon: package, hue: 40}
   - {key: operations, label: Operations, icon: network, hue: 20}
-hide_repos: [waymark-config]
+hide_repos: [forgemap-config]
 projects:
   - slug: beacon
     name: Beacon

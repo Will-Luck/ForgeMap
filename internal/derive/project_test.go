@@ -9,13 +9,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Will-Luck/waymark/internal/forge"
-	"github.com/Will-Luck/waymark/internal/model"
-	"github.com/Will-Luck/waymark/internal/registry"
-	"github.com/Will-Luck/waymark/internal/sources/docker"
-	"github.com/Will-Luck/waymark/internal/sources/fdroid"
-	"github.com/Will-Luck/waymark/internal/sources/notes"
-	"github.com/Will-Luck/waymark/internal/sources/probe"
+	"github.com/Will-Luck/forgemap/internal/forge"
+	"github.com/Will-Luck/forgemap/internal/model"
+	"github.com/Will-Luck/forgemap/internal/registry"
+	"github.com/Will-Luck/forgemap/internal/sources/docker"
+	"github.com/Will-Luck/forgemap/internal/sources/fdroid"
+	"github.com/Will-Luck/forgemap/internal/sources/notes"
+	"github.com/Will-Luck/forgemap/internal/sources/probe"
 )
 
 var testNow = time.Date(2026, 10, 31, 22, 0, 0, 0, time.UTC)
@@ -419,6 +419,44 @@ func TestActionTexts(t *testing.T) {
 	}
 }
 
+// The badge says On hold and its icon tells parked from frozen, so a hold
+// with no commits since it began adds no chip of its own. A contradicted hold
+// keeps its chip: that one says something the badge does not.
+func TestHoldChipOnlyWhenContradicted(t *testing.T) {
+	day := 24 * time.Hour
+	parked := &registry.Hold{Kind: "parked", Since: time.Date(2026, 9, 7, 0, 0, 0, 0, time.UTC)}
+	frozen := &registry.Hold{Kind: "frozen", Since: time.Date(2026, 5, 29, 0, 0, 0, 0, time.UTC)}
+	for _, tc := range []struct {
+		name string
+		s    synth
+		chip string // the hold chip's text, "" for none
+	}{
+		{"parked, no commits since", synth{lastCommit: 160 * day, hold: parked}, ""},
+		{"frozen, no commits since", synth{lastCommit: 160 * day, hold: frozen}, ""},
+		{"parked, commits since", synth{lastCommit: 2 * day, commits: 12, hold: parked}, "Still parked? 12 commits since"},
+		{"frozen, commits since", synth{lastCommit: 2 * day, commits: 2, hold: frozen}, "Still frozen? 2+ commits since"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p := BuildProject(env(t), tc.s.input()).Project
+			if p.Hold == nil || p.Hold.Contradicted != (tc.chip != "") {
+				t.Fatalf("hold = %+v", p.Hold)
+			}
+			chip := ""
+			for _, s := range p.Signals {
+				if s.Kind == "hold" {
+					chip = s.Text
+				}
+				if s.Text == "Parked" || s.Text == "Frozen" || s.Text == "On hold" {
+					t.Errorf("a chip repeats the badge: %+v", s)
+				}
+			}
+			if chip != tc.chip {
+				t.Errorf("hold chip = %q, want %q", chip, tc.chip)
+			}
+		})
+	}
+}
+
 // An F-Droid project whose repo container runs but whose index has not been
 // read (fetch failed, not fetched yet, package not listed) is not an outage.
 func TestFDroidRepoRunningWithoutIndex(t *testing.T) {
@@ -661,8 +699,8 @@ func TestHashStableAcrossPollsWhileDown(t *testing.T) {
 	if got := fixAt(b3); !got["Docker"].Equal(testNow.Add(-5*time.Second)) || !got["Probe"].Equal(failed) {
 		t.Errorf("after a state change: %v", got)
 	}
-	// A container that was already down when Waymark first looked is dated
-	// from when docker says it stopped, not from Waymark's first look.
+	// A container that was already down when ForgeMap first looked is dated
+	// from when docker says it stopped, not from ForgeMap's first look.
 	b4 := poll(testNow, "exited", "Exited (0) 6 days ago", nil)
 	if got := fixAt(b4); !got["Docker"].Equal(testNow.Add(-6 * day)) {
 		t.Errorf("down before the first look: %v", got)
@@ -938,5 +976,120 @@ func TestOpenCountsFromDetail(t *testing.T) {
 	in.Repos[0].Detail = nil
 	if p := BuildProject(env(t), in).Project; p.Repo.OpenIssues != 3 || p.Repo.OpenPRs != 0 {
 		t.Errorf("without a detail: %d issues %d PRs", p.Repo.OpenIssues, p.Repo.OpenPRs)
+	}
+}
+
+// newYork is a site zone west of UTC (A5).
+func newYork(t *testing.T) *time.Location {
+	t.Helper()
+	loc, err := time.LoadLocation("America/New_York")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return loc
+}
+
+// On a New York site a hold dated 3 Oct with a commit after it, and a note
+// with "updated: 2026-10-29" and a commit the next day, read their own
+// dates: in the headline, the tier reason, the Confirm action and the
+// note's "Written" line (A5).
+func TestDateOnlyStampsInNewYork(t *testing.T) {
+	e := env(t)
+	e.Loc = newYork(t)
+	since := time.Date(2026, 10, 3, 0, 0, 0, 0, time.UTC)
+	// One commit 31 hours before testNow: 30 Oct 15:00 UTC, 11:00 in New York.
+	in := synth{lastCommit: 31 * time.Hour, commits: 1, noteAge: time.Hour, hold: &registry.Hold{Kind: "parked", Since: since}}.input()
+	in.Notes[0].Modified, in.Notes[0].ModifiedDateOnly = time.Date(2026, 10, 29, 0, 0, 0, 0, time.UTC), true
+	p := BuildProject(e, in).Project
+	if p.Headline != "Parked since 3 Oct, but 1 commit since" {
+		t.Errorf("headline = %q, want \"Parked since 3 Oct, but 1 commit since\"", p.Headline)
+	}
+	if p.TierReason != "Parked since 3 Oct" {
+		t.Errorf("tier reason = %q, want \"Parked since 3 Oct\"", p.TierReason)
+	}
+	confirm := ""
+	for _, a := range p.Actions {
+		if a.Verb == "Confirm" {
+			confirm = a.Text
+		}
+	}
+	if confirm != "Still parked? 1 commit since 3 Oct" {
+		t.Errorf("Confirm = %q, want \"Still parked? 1 commit since 3 Oct\"", confirm)
+	}
+	if n := p.Notes[0]; !n.Stale || n.StaleReason != "Written 29 Oct; 1 commit since" {
+		t.Errorf("note = %v %q, want \"Written 29 Oct; 1 commit since\"", n.Stale, n.StaleReason)
+	}
+}
+
+// A project with no repo whose newest note says "updated: 2026-10-01", seen
+// on 31 Oct (18:00 in New York): "Notes updated 30 days ago", not 31. The
+// JSON keeps the stamp as written (A5, D1).
+func TestDateOnlyActivityDaysAgoInNewYork(t *testing.T) {
+	e := env(t)
+	e.Loc = newYork(t)
+	written := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
+	in := Input{
+		Project:    registry.Project{Slug: "rack", Name: "Rack", Category: "hardware", Icon: "server"},
+		GiteaKnown: true,
+		Notes:      []notes.Note{{Project: "rack", File: "rack.md", Name: "rack", Modified: written, ModifiedDateOnly: true}},
+		NotesAt:    testNow,
+	}
+	p := BuildProject(e, in).Project
+	if p.Tier != model.TierQuiet || p.Headline != "Notes updated 30 days ago" {
+		t.Errorf("tier %s, headline %q; want quiet, \"Notes updated 30 days ago\"", p.Tier, p.Headline)
+	}
+	if !p.LastActivity.Equal(written) {
+		t.Errorf("last_activity = %v, want the stamp as written, %v", p.LastActivity, written)
+	}
+}
+
+// A projects-file url that repeats a link the project already has is left
+// out: the GitHub mirror's link written with capitals in its scheme and host
+// and a trailing slash, and a url that repeats an earlier projects-file url
+// but for its trailing slash. Each gives one warning naming the url and the
+// link it repeats. The first link keeps its label and kind; a url that
+// differs only in its path's case stays; the probe is as before (C6).
+func TestProjectsFileURLRepeatingALinkIsLeftOut(t *testing.T) {
+	live := "https://kite.example.org/"
+	in := Input{
+		Project: registry.Project{Slug: "kite", Name: "Kite", Category: "tools", Icon: "wind", URLs: []registry.URL{
+			{Label: "Source", URL: "HTTPS://GitHub.com/acme/kite/"},
+			{Label: "Live site", URL: live, Probe: live},
+			{Label: "Site", URL: "https://kite.example.org"},
+			{Label: "Docs", URL: "https://kite.example.org/Docs"},
+			{Label: "Old docs", URL: "https://kite.example.org/docs"},
+		}},
+		GiteaKnown:  true,
+		MirrorURL:   "https://github.com/acme/kite",
+		MirrorForge: "github",
+		Probes:      []ProbeData{{Label: "Live site", URL: live, ProbeURL: live, Last: &probe.Result{URL: live, Up: true, Code: 200, LatencyMS: 20, At: testNow}}},
+	}
+	p := BuildProject(env(t), in).Project
+	var got []string
+	for _, l := range p.Links {
+		got = append(got, l.Kind+" "+l.Label+" "+l.URL)
+	}
+	want := []string{
+		"github GitHub https://github.com/acme/kite",
+		"live Live site https://kite.example.org/",
+		"live Docs https://kite.example.org/Docs",
+		"live Old docs https://kite.example.org/docs",
+	}
+	if strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Errorf("links\n %q\nwant\n %q", got, want)
+	}
+	if len(p.Probes) != 1 || p.Probes[0].Label != "Live site" || p.Probes[0].URL != live || !p.Probes[0].Up {
+		t.Errorf("probes = %+v, want the one probe as before", p.Probes)
+	}
+	out := Assemble(SiteInput{Env: env(t), Registry: registry.Empty(), Projects: []Input{in}})
+	var warns []string
+	for _, w := range out.Warnings {
+		if strings.HasPrefix(w, "project kite: ") {
+			warns = append(warns, w)
+		}
+	}
+	if len(warns) != 2 || !strings.Contains(warns[0], "url HTTPS://GitHub.com/acme/kite/ repeats the GitHub link") ||
+		!strings.Contains(warns[1], "url https://kite.example.org repeats the Live site link") {
+		t.Errorf("warnings = %q, want one for each url left out, naming the link it repeats", warns)
 	}
 }

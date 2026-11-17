@@ -1,0 +1,192 @@
+{{define "main"}}{{$v := .Data}}{{$e := $v.Form.Field}}{{$m := $v.Main}}
+<div class="wrap set-grid">
+  <nav class="side-list" aria-label="Settings">
+    <ul>
+      <li><a href="#forges">{{icon "git-branch"}}<span>Forges</span></a></li>
+      <li><a href="#page">{{icon "layout-template"}}<span>The page</span></a></li>
+      <li><a href="#access">{{icon "lock"}}<span>Access</span></a></li>
+      <li><a href="#sources">{{icon "hard-drive"}}<span>Extra sources</span></a></li>
+      <li><a href="#advanced">{{icon "sliders-horizontal"}}<span>Advanced</span></a></li>
+      <li><a href="#account">{{icon "user"}}<span>Account</span></a></li>
+    </ul>
+  </nav>
+  <div class="set-main">
+    <h1 class="page-title">{{icon "settings"}}Settings</h1>
+    {{/* A notice whose redirect jumps to a section is drawn at its head:
+         above it, the browser scrolls it out of sight. */}}
+    {{if not $v.NoticeAt}}{{template "notice" $v.Notice}}{{end}}
+    {{template "refusedTop" (dict "F" $v.Form "Lead" "Not saved." "One" "setting needs" "Many" "settings need")}}
+    {{template "formTop" $v.Form.Top}}
+
+    <section id="forges" class="form-card" aria-labelledby="forges-h">
+      <h2 id="forges-h">{{icon "git-branch"}}Forges</h2>
+      {{if eq $v.NoticeAt "forges"}}{{template "notice" $v.Notice}}{{end}}
+      {{range $v.Rows}}<div class="frow">
+        <div class="frow-main">
+          <p><b>{{.Name}}</b>{{with .Address}} <small class="mono">{{.}}</small>{{end}} <span class="fstate {{.Tone}}">{{icon .Icon}}<span>{{.State}}</span></span></p>
+          {{if .Trusted}}<p class="field-hint frow-trust">{{icon "shield-check"}}<span>Certificate trusted by you</span></p>{{end}}
+          {{with .Error}}<p class="frow-err">{{.}}</p>{{end}}
+        </div>
+        <div class="frow-acts">
+          <a class="btn" href="/settings/forges/{{.ID}}">Edit</a>
+          <a class="btn" href="/settings/forges/{{.ID}}#token">Replace token</a>
+          <form class="form-inline" method="post" action="/settings/forges/{{.ID}}/check"><button class="btn">{{icon "refresh-cw"}}Check again</button></form>
+          <a class="btn quiet" href="/settings/forges/{{.ID}}#remove">Remove</a>
+        </div>
+      </div>{{else}}<p class="field-hint">No forge is connected yet.</p>{{end}}
+      <div class="frow"><a class="btn" href="/settings/forges/new">{{icon "plus"}}Add a forge</a></div>
+    </section>
+
+    <form id="key-form" method="post" action="/settings/key"></form>
+    <form id="settings-form" class="form" method="post" action="/settings" data-enhance>
+      <section id="page" class="form-card" aria-labelledby="page-h">
+        <h2 id="page-h">{{icon "layout-template"}}The page</h2>
+        {{template "textField" (dict "Name" "site.title" "Label" "Page title" "Value" $m.Title "Err" (index $e "site.title"))}}
+        <div class="field">
+          <label for="site.timezone">Time zone</label>
+          <input type="text" class="input" id="site.timezone" list="zones" autocomplete="off" spellcheck="false"{{with index $e "site.timezone"}} aria-invalid="true"{{end}} aria-describedby="hint-site.timezone{{with index $e "site.timezone"}} err-site.timezone{{end}}" name="site.timezone" value="{{$m.Timezone}}">
+          <datalist id="zones"></datalist>
+          <p class="field-hint" id="hint-site.timezone">Like Europe/London. Every date and time on the page is written in it.</p>
+          {{template "fieldErr" (dict "Name" "site.timezone" "Msg" (index $e "site.timezone"))}}
+        </div>
+      </section>
+
+      <section id="access" class="form-card" aria-labelledby="access-h">
+        <h2 id="access-h">{{icon "lock"}}Access</h2>
+        {{if eq $v.NoticeAt "access"}}{{template "notice" $v.Notice}}{{end}}
+        {{template "switchField" (dict "Name" "sign_in" "Label" "Ask for sign-in to see the page" "On" $m.SignInToView "Hint" "Off: anyone who can reach the page sees it. Settings always need sign-in." "Err" (index $e "sign_in"))}}
+        {{template "switchField" (dict "Name" "include_private" "Label" "Show private repos" "On" $m.IncludePrivate "NeedsSignIn" true "Hint" "Only possible while sign-in is on." "Err" (index $e "include_private"))}}
+        <div class="field">
+          <p class="field-label">{{icon "key-round"}}Key for feed readers and scripts</p>
+          {{if $v.Key}}<p><code class="key-whole">{{$v.Key}}</code></p>
+          <p class="field-hint">Feed address: <code class="key-whole">{{$v.FeedURL}}</code></p>
+          {{else}}<p>The key ends in <b>{{$v.KeyTail}}</b>.</p>{{end}}
+          <div class="form-foot">
+            {{if $v.Key}}<button type="button" class="btn" hidden data-js-show data-copy="{{$v.FeedURL}}">{{icon "clipboard"}}<span>Copy feed address</span></button>{{end}}
+            <button class="btn" form="key-form">{{icon "refresh-cw"}}Make a new key</button>
+          </div>
+          <p class="field-hint">A feed reader cannot type a password. It uses this key in the feed address. A new key stops the old one at once.</p>
+        </div>
+      </section>
+
+      <section id="sources" class="form-card" aria-labelledby="sources-h">
+        <h2 id="sources-h">{{icon "hard-drive"}}Extra sources</h2>
+        <p class="field-hint">Each needs a folder shared into the container. <a href="https://github.com/Will-Luck/forgemap/wiki/Installation#share-a-folder">How to share a folder</a></p>
+        <div class="field">
+          <label for="notes.type">Notes</label>
+          <select class="input" id="notes.type"{{with index $e "notes.type"}} aria-invalid="true" aria-describedby="err-notes.type"{{end}} name="notes.type">
+            <option value="none"{{if or (eq $m.NotesType "none") (eq $m.NotesType "")}} selected{{end}}>No notes</option>
+            <option value="markdown"{{if eq $m.NotesType "markdown"}} selected{{end}}>Markdown files</option>
+            <option value="claude-memory"{{if eq $m.NotesType "claude-memory"}} selected{{end}}>Claude Code memory</option>
+          </select>
+          {{template "fieldErr" (dict "Name" "notes.type" "Msg" (index $e "notes.type"))}}
+        </div>
+        {{template "textField" (dict "Name" "notes.dir" "Label" "Notes folder" "Value" $m.NotesDir "Mono" true "State" $v.Paths.NotesDir "Err" (index $e "notes.dir"))}}
+        {{template "textField" (dict "Name" "notes.markers" "Label" "Lines that mark a note for you" "Value" (joinList $m.NotesMarkers) "Hint" "Markdown notes only. A list item with one of these needs you. Part them with commas." "Err" (index $e "notes.markers"))}}
+        {{template "textField" (dict "Name" "site.you" "Label" "Your names on the page" "Value" (joinList $m.You) "Hint" "Used for Needs you: Claude Code memory notes name you this way. Part them with commas." "Err" (index $e "site.you"))}}
+        {{template "textField" (dict "Name" "docker.feed" "Label" "Docker feed file" "Value" $m.DockerFeed "Mono" true "State" (or (and (not $m.DockerHost) $v.Paths.DockerFeed) "") "Hint" "A file a job on the host writes, such as /feed/docker.json." "Err" (index $e "docker.feed"))}}
+        {{template "textField" (dict "Name" "docker.host" "Label" "Docker socket or address" "Value" $m.DockerHost "Mono" true "State" (or (and $m.DockerHost $v.Paths.DockerHost) "") "Hint" "Or read Docker itself, such as unix:///var/run/docker.sock." "Err" (index $e "docker.host"))}}
+        {{template "textField" (dict "Name" "docker.label" "Label" "Name of the Docker host" "Value" $m.DockerLabel "Hint" "What Where it runs calls it, such as web-01." "Err" (index $e "docker.label"))}}
+        {{template "fileRef" (dict "P" "projects" "Label" "Projects file" "Ref" $m.Projects "State" $v.Paths.ProjectsFile "Forges" $v.Forges "E" $e)}}
+        {{template "fileRef" (dict "P" "ideas" "Label" "Ideas file" "Ref" $m.Ideas "State" $v.Paths.IdeasFile "Forges" $v.Forges "E" $e)}}
+      </section>
+
+      <section id="advanced" class="form-card" aria-labelledby="advanced-h">
+        <h2 id="advanced-h">{{icon "sliders-horizontal"}}Advanced</h2>
+        {{template "textField" (dict "Name" "ideas.labels" "Label" "Issue labels that count as ideas" "Value" (joinList $m.IdeaLabels) "Hint" "Part them with commas. Empty: no issue is an idea." "Err" (index $e "ideas.labels"))}}
+        {{template "textField" (dict "Name" "ideas.marker" "Label" "The word that marks an idea" "Value" $m.IdeaMarker "Mono" true "Hint" "File as issue puts it last in the new issue, so ForgeMap finds the issue again." "Err" (index $e "ideas.marker"))}}
+        {{template "textField" (dict "Name" "needs_you.labels" "Label" "Issue labels that mean needs you" "Value" (joinList $m.NeedsLabels) "Hint" "Part them with commas." "Err" (index $e "needs_you.labels"))}}
+        {{template "switchField" (dict "Name" "needs_you.assigned" "Label" "Issues assigned to you need you" "On" $m.NeedsAssigned "Err" (index $e "needs_you.assigned"))}}
+        {{template "switchField" (dict "Name" "needs_you.review_requests" "Label" "Review requests need you" "On" $m.NeedsReviewRequests "Err" (index $e "needs_you.review_requests"))}}
+        {{template "textField" (dict "Name" "plans.dirs" "Label" "Plan folders" "Value" (joinList $m.PlanDirs) "Mono" true "Hint" "Folders in each repo that hold dated plans. Part them with commas." "Err" (index $e "plans.dirs"))}}
+        {{template "switchField" (dict "Name" "probes.homepages" "Label" "Check each project's homepage is up" "On" $m.Homepages "Err" (index $e "probes.homepages"))}}
+        {{template "switchField" (dict "Name" "refresh" "Label" "Show the Refresh now button" "On" $m.Refresh "Hint" "Off also turns away a forge's push webhook." "Err" (index $e "refresh"))}}
+      </section>
+
+      <div class="savebar" data-savebar>
+        <span data-unsaved aria-live="polite"></span>
+        <button type="reset" class="btn">Discard</button>
+        <button class="btn accent">Save and apply</button>
+      </div>
+    </form>
+
+    <section id="account" class="form-card" aria-labelledby="account-h">
+      <h2 id="account-h">{{icon "user"}}Account</h2>
+      {{if eq $v.NoticeAt "account"}}{{template "notice" $v.Notice}}{{end}}
+      <p>Signed in as <b>{{$v.Username}}</b>.</p>
+      {{$p := $v.Pass.Field}}
+      <form class="form" method="post" action="/settings/password#account">{{/* the fragment survives the POST: a refusal opens here */}}
+        <h3>Change password</h3>
+        {{template "refusedTop" (dict "F" $v.Pass "Lead" "Not changed." "One" "box needs" "Many" "boxes need")}}
+        {{template "formTop" $v.Pass.Top}}
+        <input type="text" hidden autocomplete="username" value="{{$v.Username}}">{{/* for password managers; it has no name, so it is never sent */}}
+        <div class="field">
+          <label for="pw-current">Current password</label>
+          <input type="password" class="input" id="pw-current" autocomplete="current-password" required{{with index $p "current"}} aria-invalid="true" aria-describedby="err-current"{{end}} name="current" value="">
+          {{template "fieldErr" (dict "Name" "current" "Msg" (index $p "current"))}}
+        </div>
+        <div class="field">
+          <label for="pw-new">New password</label>
+          <input type="password" class="input" id="pw-new" autocomplete="new-password" required{{with index $p "password"}} aria-invalid="true"{{end}} aria-describedby="hint-password{{with index $p "password"}} err-password{{end}}" name="password" value="">
+          <p class="field-hint" id="hint-password">12 characters or more. Every other device is signed out.</p>
+          {{template "fieldErr" (dict "Name" "password" "Msg" (index $p "password"))}}
+        </div>
+        <div class="field">
+          <label for="pw-confirm">New password again</label>
+          <input type="password" class="input" id="pw-confirm" autocomplete="new-password" required{{with index $p "confirm"}} aria-invalid="true" aria-describedby="err-confirm"{{end}} name="confirm" value="">
+          {{template "fieldErr" (dict "Name" "confirm" "Msg" (index $p "confirm"))}}
+        </div>
+        <div class="form-foot"><button class="btn">{{icon "lock"}}Change password</button></div>
+      </form>
+      <form class="form" method="post" action="/signout">
+        <div class="form-foot"><button class="btn">{{icon "door-open"}}Sign out</button></div>
+      </form>
+    </section>
+  </div>
+</div>
+{{end}}
+
+{{/* textField: a labelled text box (dict Name Label Value, and Hint, Mono,
+     State for a path's check, Err). */}}
+{{define "textField"}}<div class="field">
+  <div class="field-head"><label for="{{.Name}}">{{.Label}}</label>{{template "pathState" .State}}</div>
+  <input type="text" class="input{{if .Mono}} mono{{end}}" id="{{.Name}}" autocomplete="off" spellcheck="false"{{template "describedBy" .}} name="{{.Name}}" value="{{.Value}}">
+  {{with .Hint}}<p class="field-hint" id="hint-{{$.Name}}">{{.}}</p>{{end}}
+  {{template "fieldErr" (dict "Name" .Name "Msg" .Err)}}
+</div>{{end}}
+
+{{/* switchField: a tick box drawn as a switch, with its label and hint
+     (dict Name Label On, and Hint, NeedsSignIn, Err). */}}
+{{define "switchField"}}<div class="toggle">
+  <input type="checkbox" class="switch" id="{{.Name}}"{{if .NeedsSignIn}} data-needs-signin{{end}}{{template "describedBy" .}} name="{{.Name}}" value="on"{{if .On}} checked{{end}}>
+  <div><label for="{{.Name}}"><b>{{.Label}}</b></label>{{with .Hint}}<p class="field-hint" id="hint-{{$.Name}}">{{.}}</p>{{end}}{{template "fieldErr" (dict "Name" $.Name "Msg" $.Err)}}</div>
+</div>{{end}}
+
+{{/* describedBy: a field's aria-invalid and aria-describedby (dict Name, and
+     Hint, Err): its hint always, its refusal once it is refused. */}}
+{{define "describedBy"}}{{with .Err}} aria-invalid="true"{{end}}{{if .Hint}} aria-describedby="hint-{{.Name}}{{with .Err}} err-{{$.Name}}{{end}}"{{else if .Err}} aria-describedby="err-{{.Name}}"{{end}}{{end}}
+
+{{/* fileRef: the projects or ideas file, on disk or in a forge's repo
+     (dict P Label Ref State Forges E). */}}
+{{define "fileRef"}}{{$p := .P}}{{$r := .Ref}}{{$e := .E}}
+<fieldset class="field file-ref">
+  <legend>{{.Label}}</legend>
+  {{template "textField" (dict "Name" (print $p ".file") "Label" "A file in the container" "Value" $r.File "Mono" true "State" .State "Err" (index $e (print $p ".file")))}}
+  <p class="field-hint">Or a file in a repo:</p>
+  <div class="field-row">
+    <div class="field">
+      <label for="{{$p}}.forge">Forge</label>
+      <select class="input" id="{{$p}}.forge"{{with index $e (print $p ".forge")}} aria-invalid="true" aria-describedby="err-{{$p}}.forge"{{end}} name="{{$p}}.forge">
+        <option value=""{{if eq $r.Forge ""}} selected{{end}}>None</option>
+        {{$known := false}}{{range .Forges}}{{if eq .ID $r.Forge}}{{$known = true}}{{end}}<option value="{{.ID}}"{{if eq .ID $r.Forge}} selected{{end}}>{{.Name}} ({{.ID}})</option>
+        {{end}}{{if and $r.Forge (not $known)}}<option value="{{$r.Forge}}" selected>{{$r.Forge}} (not connected)</option>{{end}}
+      </select>
+      {{template "fieldErr" (dict "Name" (print $p ".forge") "Msg" (index $e (print $p ".forge")))}}
+    </div>
+    {{template "textField" (dict "Name" (print $p ".repo") "Label" "Repo, as owner/name" "Value" $r.Repo "Mono" true "Err" (index $e (print $p ".repo")))}}
+    {{template "textField" (dict "Name" (print $p ".path") "Label" "Path in the repo" "Value" $r.Path "Mono" true "Err" (index $e (print $p ".path")))}}
+  </div>
+</fieldset>{{end}}
+
+{{/* pathState: what a check of a local path found, in words. */}}
+{{define "pathState"}}{{if eq . "found"}}<span class="fstate ok">{{icon "circle-check"}}<span>Found</span></span>{{else if eq . "missing"}}<span class="fstate warn">{{icon "circle-x"}}<span>Not found</span></span>{{else if eq . "unset"}}<span class="fstate mut">{{icon "circle-dashed"}}<span>Not set</span></span>{{end}}{{end}}

@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Will-Luck/waymark/internal/config"
-	"github.com/Will-Luck/waymark/internal/model"
+	"github.com/Will-Luck/forgemap/internal/config"
+	"github.com/Will-Luck/forgemap/internal/model"
 )
 
 func slugsOf(s *model.Site) []string {
@@ -119,7 +119,7 @@ func TestUnparseableSourceKeepsCache(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	w.edit("/api/v1/repos/acme/waymark-config/raw/ideas.json", func([]byte) []byte { return []byte("{not json") })
+	w.edit("/api/v1/repos/acme/forgemap-config/raw/ideas.json", func([]byte) []byte { return []byte("{not json") })
 	a := w.restarted()
 	got, err := a.RunOnce(ctx)
 	if err != nil {
@@ -209,7 +209,7 @@ func TestProjectPlanDirsReachTheForge(t *testing.T) {
 	}
 	w.app.repoSt[repoKey("gitea", "acme/beacon")].files = nil // read the files again
 	w.app.mu.Unlock()
-	w.app.collectDetails(ctx, false)
+	w.app.collectDetails(ctx)
 	if w.count(base+"notes/plans") == 0 {
 		t.Error("the project's plan_dirs were not requested")
 	}

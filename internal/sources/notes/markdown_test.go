@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Will-Luck/waymark/internal/registry"
+	"github.com/Will-Luck/forgemap/internal/registry"
 )
 
 const mdDir = "../../../testdata/notes-markdown"

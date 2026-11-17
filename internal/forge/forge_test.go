@@ -119,7 +119,7 @@ func TestFiledIdeas(t *testing.T) {
 	if err := json.Unmarshal(fixture(t, "issue_search.json"), &found); err != nil {
 		t.Fatal(err)
 	}
-	if got := FiledIdeas(found, "waymark-idea:"); len(got) != 1 || got["beacon-01"].Number != 15 || !strings.HasSuffix(got["beacon-01"].URL, "/acme/beacon/issues/15") {
+	if got := FiledIdeas(found, "forgemap-idea:"); len(got) != 1 || got["beacon-01"].Number != 15 || !strings.HasSuffix(got["beacon-01"].URL, "/acme/beacon/issues/15") {
 		t.Errorf("search answer: filed = %+v", got)
 	}
 	// Another marker finds only its own lines, taken literally (a regexp
@@ -127,7 +127,7 @@ func TestFiledIdeas(t *testing.T) {
 	other := []Issue{
 		{Number: 1, Body: "acme.idea+tool-01"},
 		{Number: 2, Body: "acmexidea+tool-02"},
-		{Number: 3, Body: "waymark-idea:tool-03"},
+		{Number: 3, Body: "forgemap-idea:tool-03"},
 	}
 	if got := FiledIdeas(other, "acme.idea+"); len(got) != 1 || got["tool-01"].Number != 1 {
 		t.Errorf("marker acme.idea+: filed = %+v", got)

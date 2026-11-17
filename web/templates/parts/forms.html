@@ -1,0 +1,79 @@
+{{/* The parts the forms of setup, sign-in and Settings share. */}}
+
+{{/* formTop: the problems that belong to no shown control, at the top of a form. */}}
+{{define "formTop"}}{{range .}}<p class="form-err" role="alert">{{icon "octagon-alert"}}<span>{{cmdWhole .}}</span></p>{{end}}{{end}}
+
+{{/* refusedTop: the line at the top of a form refused for its controls:
+     how many need a look and a link to the first (dict "F" the form's
+     formState, "Lead" the first words, "One" and "Many" the counted noun
+     and verb, such as "setting needs" and "settings need"). */}}
+{{define "refusedTop"}}{{with .F.First}}<p class="form-err" role="alert">{{icon "octagon-alert"}}<span>{{$.Lead}} {{plural $.F.Refused $.One $.Many}} a look. <a href="#{{.}}">{{if eq $.F.Refused 1}}Go to it{{else}}Go to the first{{end}}</a></span></p>{{end}}{{end}}
+
+{{/* fieldErr: one refused control's message, after it (dict "Name" "Msg"). */}}
+{{define "fieldErr"}}{{with .Msg}}<p class="field-err" id="err-{{$.Name}}">{{icon "triangle-alert"}}<span>{{.}}</span></p>{{end}}{{end}}
+
+{{/* notice: a one-time message on the next page. */}}
+{{define "notice"}}{{with .}}<p class="form-ok" role="status">{{icon "circle-check"}}<span>{{.}}</span></p>{{end}}{{end}}
+
+{{/* steps: setup's 1-2-3 header, on the step it is given. */}}
+{{define "steps"}}<ol class="steps" aria-label="Setup steps">
+  {{if gt . 1}}<li class="step done"><span class="step-n">{{icon "check"}}</span>Your account <span class="sr">done</span></li>{{else}}<li class="step now" aria-current="step"><span class="step-n">1</span>Your account</li>{{end}}
+  {{if gt . 2}}<li class="step done"><span class="step-n">{{icon "check"}}</span>Your forges <span class="sr">done</span></li>{{else if eq . 2}}<li class="step now" aria-current="step"><span class="step-n">2</span>Your forges</li>{{else}}<li class="step"><span class="step-n">2</span>Your forges</li>{{end}}
+  {{if eq . 3}}<li class="step now" aria-current="step"><span class="step-n">3</span>The page</li>{{else}}<li class="step"><span class="step-n">3</span>The page</li>{{end}}
+</ol>{{end}}
+
+{{/* forgeAdd: the Add a forge form of setup step 2 and Settings. It takes a
+     dict with "Form" (its problems), "Add" (the type and address typed;
+     the token is never sent back) and "H2" (true where the form is under
+     the page's h1, so the certificate panel's heading is an h2; else it is
+     an h3). data-enhance has app.js load forms.js on the main layout's Add
+     page. */}}
+{{define "forgeAdd"}}{{$e := .Form.Field}}{{$t := .Add.Type}}
+<form class="form" method="post" action="/settings/forges" data-forge-form data-enhance>
+  {{template "formTop" .Form.Top}}
+  <fieldset class="field">
+    <legend>Forge</legend>
+    <div class="seg">
+      {{/* The tick shows only on the chosen one (app.css): not colour alone. */}}
+      <label><input type="radio" name="type" value="gitea"{{if or (eq $t "gitea") (eq $t "")}} checked{{end}}><span>{{icon "check"}}Gitea</span></label>
+      <label><input type="radio" name="type" value="forgejo"{{if eq $t "forgejo"}} checked{{end}}><span>{{icon "check"}}Forgejo</span></label>
+      <label><input type="radio" name="type" value="github"{{if eq $t "github"}} checked{{end}}><span>{{icon "check"}}GitHub</span></label>
+    </div>
+    {{template "fieldErr" (dict "Name" "type" "Msg" (index $e "type"))}}
+  </fieldset>
+  <div class="field" data-address>
+    <label for="address">Address</label>
+    <input type="url" class="input mono" id="address" autocomplete="url" spellcheck="false" placeholder="https://git.example.com"{{with index $e "address"}} aria-invalid="true"{{end}} aria-describedby="hint-address{{with index $e "address"}} err-address{{end}}" name="address" value="{{.Add.Address}}">
+    <p class="field-hint" id="hint-address">The address you open in the browser, like https://git.example.com. GitHub needs none.</p>
+    {{template "fieldErr" (dict "Name" "address" "Msg" (index $e "address"))}}
+  </div>
+  <div class="field">
+    <label for="token">Read-only token</label>
+    <input type="password" class="input mono" id="token" autocomplete="off" spellcheck="false"{{with index $e "token"}} aria-invalid="true"{{end}} aria-describedby="hint-token{{with index $e "token"}} err-token{{end}}" name="token" value="">
+    <p class="field-hint" id="hint-token">Read-only is enough. The <a href="https://github.com/Will-Luck/forgemap/wiki/Installation">Installation guide</a> lists the boxes to tick.</p>
+    {{template "fieldErr" (dict "Name" "token" "Msg" (index $e "token"))}}
+  </div>
+  {{template "certTick" (dict "C" .Form.Cert "Button" "Connect" "ID" "trust" "H2" .H2)}}
+  <div class="form-foot"><button class="btn accent">{{icon "plug"}}Connect</button></div>
+</form>{{end}}
+
+{{/* certFacts: what a certificate (a *CertView) says: who it was issued to
+     and by, its last valid day and its fingerprint. */}}
+{{define "certFacts"}}<dl class="cert-facts">
+  <dt>Issued to</dt><dd>{{.IssuedTo}}</dd>
+  <dt>Issued by</dt><dd>{{.IssuedBy}}</dd>
+  <dt>Valid until</dt><dd>{{date .ValidUntil}}</dd>
+  <dt>Fingerprint (SHA-256)</dt><dd class="mono">{{fingerprint .Pin}}</dd>
+</dl>{{end}}
+
+{{/* certTick: the certificate panel inside Add a forge or Replace token
+     (dict "C" the refusal's *CertView, nil for none; "Button" the form's
+     button; "ID" the tick box's id; "H2" true for an h2 heading, else an
+     h3). The box is never ticked for the owner: a certificate is trusted
+     only by a tick of its own. */}}
+{{define "certTick"}}{{with .C}}<div class="cert">
+  {{if $.H2}}<h2>{{icon "shield"}}The certificate of {{.Host}}</h2>{{else}}<h3>{{icon "shield"}}The certificate of {{.Host}}</h3>{{end}}
+  <p>{{.Reason}}</p>
+  {{template "certFacts" .}}
+  <label class="choice"><input type="checkbox" id="{{$.ID}}" name="trust" value="{{.Pin}}"><span><b>Trust this certificate for this forge</b><small>ForgeMap will then accept this certificate and no other from {{.Host}}. If you can, compare the fingerprint with the one your forge shows, for example in your browser's certificate details. To trust it, tick this, paste the token again and press {{$.Button}}.</small></span></label>
+</div>{{end}}{{end}}

@@ -45,7 +45,10 @@ export function toggleTheme(origin) {
   root.style.setProperty("--vt-r", far + "px");
   root.classList.add("theme-vt");
   const vt = document.startViewTransition(() => apply(next));
-  vt.finished.finally(() => root.classList.remove("theme-vt"));
+  // A transition started before this one is ready (a live swap, a second
+  // toggle) skips it: ready rejects, and the theme is applied all the same.
+  vt.ready.catch(() => {});
+  vt.finished.catch(() => {}).finally(() => root.classList.remove("theme-vt"));
 }
 
 const saved = store.get("theme");

@@ -16,12 +16,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Will-Luck/waymark/internal/model"
-	assets "github.com/Will-Luck/waymark/web"
+	"github.com/Will-Luck/forgemap/internal/model"
+	assets "github.com/Will-Luck/forgemap/web"
 )
 
 // The CSP exactly as the spec writes it; compared literally, not via the const.
-const specCSP = "default-src 'self'; script-src 'self' 'inline-speculation-rules'; style-src 'self'; img-src 'self' data:; connect-src 'self'; font-src 'self'; frame-ancestors 'none'"
+const specCSP = "default-src 'self'; script-src 'self' 'inline-speculation-rules'; style-src 'self'; img-src 'self' data:; connect-src 'self'; font-src 'self'; form-action 'self'; frame-ancestors 'none'"
 
 var fixedNow = time.Date(2026, 10, 31, 23, 0, 30, 0, time.UTC)
 
@@ -361,6 +361,19 @@ func TestDynCSS(t *testing.T) {
 	if got := rec.Header().Get("Cache-Control"); got != "public, max-age=31536000, immutable" {
 		t.Errorf("dyn Cache-Control %q", got)
 	}
+	// With sign-in on, the stylesheet names every project: it is the
+	// owner's alone and never stored.
+	mh := managed(t, managedSite(), ready(true))
+	own := dynRe.FindString(asOwner(t, mh, "/").Body.String())
+	if own == "" {
+		t.Fatal("the owner's overview has no dyn stylesheet link")
+	}
+	if rec := get(t, mh, own); rec.Code != http.StatusUnauthorized {
+		t.Errorf("signed-out dyn css %q: %d, want 401", own, rec.Code)
+	}
+	if got := asOwner(t, mh, own).Header().Get("Cache-Control"); got != "private, no-store" {
+		t.Errorf("the owner's dyn css: Cache-Control %q", got)
+	}
 }
 
 func TestEventsStream(t *testing.T) {
@@ -479,7 +492,7 @@ func TestEscaping(t *testing.T) {
 func TestAwkwardStates(t *testing.T) {
 	h, _ := handler(t, "site-awkward.json", false)
 	home := get(t, h, "/").Body.String()
-	for _, w := range []string{`data-status="warn"`, `Gitea failing`, `gitea /user/repos: HTTP 502 Bad Gateway (showing the last good data)`, `<span class="tag">unsorted</span>`,
+	for _, w := range []string{`data-status="warn"`, `Gitea failing`, `gitea /orgs/acme/repos: HTTP 502 Bad Gateway (showing the last good data)`, `<span class="tag">unsorted</span>`,
 		`class="need lv-alert"`, `>Fix</span>`, `>Confirm</span>`, `>Review</span>`} {
 		if !strings.Contains(home, w) {
 			t.Errorf("overview missing %q", w)
@@ -599,19 +612,60 @@ func TestTierCountsPerCategory(t *testing.T) {
 	}
 }
 
-// A kind and size pair with no ideas says so (CSS only, so without JS too),
-// and each chip's count narrows to the other filter's choice.
+// A kind, size and issue choice with no ideas says so (CSS only, so without
+// JS too), and each kind and size chip's count narrows to the other one's
+// choice. Spec: DESIGN.md C8 adds the issue filter (Filed, Not filed).
 func TestIdeasEmptyState(t *testing.T) {
-	h, src := handler(t, "site.json", false)
+	site := loadSite(t, "site.json")
+	// beacon-01, the one filed idea from the ideas file, shares quick-win S
+	// with the label idea kite#5. Moved to M, it leaves kite#5 alone in
+	// quick-win S Filed, so the rules below see whether label ideas are filed.
+	moved := false
+	for i := range site.Ideas {
+		if site.Ideas[i].ID == "beacon-01" && site.Ideas[i].Kind == "quick-win" && site.Ideas[i].Size == "S" {
+			site.Ideas[i].Size, moved = "M", true
+		}
+	}
+	if !moved {
+		t.Fatal("fixture: beacon-01 is no longer a quick-win S idea")
+	}
+	h := serve(site)
 	body := get(t, h, "/ideas").Body.String()
 	if !strings.Contains(body, `<p class="ideas-empty" data-ideas-empty>`) || !strings.Contains(body, "No ideas match these filters.") {
 		t.Fatal("no empty-state message on /ideas")
 	}
 	n := map[[2]string]int{}
-	for _, i := range src.Snapshot().Ideas {
+	n3 := map[[3]string]int{}
+	byLabel := map[[3]string]int{} // the part of n3 that label ideas fill
+	for _, i := range site.Ideas {
 		n[[2]string{i.Kind, i.Size}]++
 		n[[2]string{i.Kind, "all"}]++
 		n[[2]string{"all", i.Size}]++
+		// Filed is every idea with an issue, a label idea included (it is an
+		// issue already). Written out, not filedState, so a change there shows.
+		f := "no"
+		if i.Source == "issue" || i.FiledIssue > 0 || i.ExistingIssue > 0 {
+			f = "yes"
+		}
+		for _, k := range []string{i.Kind, "all"} {
+			for _, s := range []string{i.Size, "all"} {
+				for _, fs := range []string{f, "all"} {
+					n3[[3]string{k, s, fs}]++
+					if i.Source == "issue" {
+						byLabel[[3]string{k, s, fs}]++
+					}
+				}
+			}
+		}
+	}
+	labelOnly := 0
+	for key, c := range n3 {
+		if key[2] == "yes" && key[1] != "all" && c > 0 && byLabel[key] == c {
+			labelOnly++
+		}
+	}
+	if labelOnly == 0 {
+		t.Error("no Filed choice holds label ideas alone, so whether they count as filed is untested")
 	}
 	m := dynRe.FindStringSubmatch(body)
 	if m == nil {
@@ -621,20 +675,26 @@ func TestIdeasEmptyState(t *testing.T) {
 	zero := 0
 	for _, k := range []string{"all", "quick-win", "bold", "connective", "hardening"} {
 		for _, s := range []string{"all", "S", "M", "L"} {
-			if k == "all" && s == "all" {
-				continue
-			}
-			rule := fmt.Sprintf(`body:has(#k-%s:checked):has(#s-%s:checked) .ideas-empty{display:flex}`, k, s)
-			if got := strings.Contains(css, rule); got != (n[[2]string{k, s}] == 0) {
-				t.Errorf("k-%s + s-%s: %d ideas, empty rule present %v", k, s, n[[2]string{k, s}], got)
-			}
-			if n[[2]string{k, s}] == 0 {
-				zero++
+			for _, f := range []string{"all", "yes", "no"} {
+				if k == "all" && s == "all" && f == "all" {
+					continue
+				}
+				c := n3[[3]string{k, s, f}]
+				rule := fmt.Sprintf(`body:has(#k-%s:checked):has(#s-%s:checked):has(#f-%s:checked) .ideas-empty{display:flex}`, k, s, f)
+				if got := strings.Contains(css, rule); got != (c == 0) {
+					t.Errorf("k-%s + s-%s + f-%s: %d ideas, empty rule present %v", k, s, f, c, got)
+				}
+				if c == 0 {
+					zero++
+				}
 			}
 		}
 	}
 	if zero == 0 {
-		t.Error("the fixture has no empty pair, so the rule is untested")
+		t.Error("the fixture has no empty choice, so the rule is untested")
+	}
+	if regexp.MustCompile(`#s-[A-Za-z]+:checked\) \.ideas-empty`).MatchString(css) {
+		t.Error("a kind and size rule without the issue filter is left beside it")
 	}
 	sizeL, _, _ := strings.Cut(strings.SplitN(body, `<label for="s-L">`, 2)[1], "</label>")
 	if w := fmt.Sprintf(`<span class="n" data-n="k-quick-win">%d</span>`, n[[2]string{"quick-win", "L"}]); !strings.Contains(sizeL, w) {
@@ -952,13 +1012,13 @@ func TestTitleFromMeta(t *testing.T) {
 				t.Errorf("%s: missing %q", path, w)
 			}
 		}
-		if strings.Contains(body, "Roadmap") || strings.Contains(body, "Waymark") {
+		if strings.Contains(body, "Roadmap") || strings.Contains(body, "ForgeMap") {
 			t.Errorf("%s: names a site the data does not", path)
 		}
 	}
 	site.Meta.Title = ""
-	if body := get(t, serve(site), "/").Body.String(); !strings.Contains(body, "<title>Waymark</title>") {
-		t.Error("an empty title does not fall back to Waymark")
+	if body := get(t, serve(site), "/").Body.String(); !strings.Contains(body, "<title>ForgeMap</title>") {
+		t.Error("an empty title does not fall back to ForgeMap")
 	}
 }
 
@@ -1313,7 +1373,7 @@ func TestNoteBodyRenders(t *testing.T) {
 }
 
 // Ideas from labelled issues are issues already: the page says where they
-// come from, shows no kind or size it does not know, and counts none as filed.
+// come from, shows no kind or size it does not know, and counts each as filed.
 func TestLabelIdeasCopy(t *testing.T) {
 	site := acmeSite()
 	site.Meta.Ideas, site.Meta.IdeaLabels = true, []string{"idea", "enhancement"}
@@ -1327,14 +1387,17 @@ func TestLabelIdeasCopy(t *testing.T) {
 			t.Errorf("label ideas only: missing %q", w)
 		}
 	}
-	if strings.Contains(body, "Already filed") {
-		t.Error("label ideas only: an Already filed count for ideas that are issues already")
+	if strings.Contains(body, `name="filed"`) {
+		t.Error("label ideas only: an issue filter for ideas that are issues already")
 	}
 	card, _, _ := strings.Cut(strings.SplitN(body, `id="idea-github-acme-app-3"`, 2)[1], "</article>")
 	for _, w := range []string{`class="kind"`, `class="size"`, "Unsized", "roundup", "Already #3"} {
 		if strings.Contains(card, w) || (w == "roundup" && strings.Contains(body, w)) {
 			t.Errorf("label idea shows %q", w)
 		}
+	}
+	if !strings.Contains(card, `data-filed="yes"`) {
+		t.Error("label idea card: not marked as filed (data-filed)")
 	}
 
 	file := model.Idea{ID: "app-01", Project: "app", ProjectName: "App", Icon: "box", Title: "Export", Pitch: "CSV out", Size: "S", Kind: "quick-win",
@@ -1347,12 +1410,25 @@ func TestLabelIdeasCopy(t *testing.T) {
 		`<p class="lead">Ideas from the ideas file (updated <b>31 Oct 2026</b>) and from issues labelled idea or enhancement. File one as an issue to make it real.</p>`,
 		`<meta name="description" content="Feature ideas from the ideas file, ready to file as issues.">`,
 		`(opens GitHub in a new tab)`, `Quick win`, `Small`,
-		// The label idea is an issue already: neither filed nor unfiled.
-		`<span class="kc-num">0</span><span class="kc-label">Already filed</span>`,
+		// The label idea is an issue already, so it is filed: Filed and Not
+		// filed together are All.
+		`<label for="k-all">All <span class="n" data-n="all">2</span>`,
+		`Filed <span class="n" data-n="all">1</span></label>`,
+		`Not filed <span class="n" data-n="all">1</span></label>`,
 	} {
 		if !strings.Contains(body, w) {
 			t.Errorf("both kinds: missing %q", w)
 		}
+	}
+	if card, _, _ := strings.Cut(strings.SplitN(body, `id="idea-github-acme-app-3"`, 2)[1], ">"); !strings.Contains(card, `data-filed="yes"`) {
+		t.Errorf("both kinds: label idea card is not filed: %s", card)
+	}
+	if card, _, _ := strings.Cut(strings.SplitN(body, `id="idea-app-01"`, 2)[1], ">"); !strings.Contains(card, `data-filed="no"`) {
+		t.Errorf("both kinds: file idea card is filed: %s", card)
+	}
+	// Without JS, Filed shows the label idea, so it is not an empty choice.
+	if r := "body:has(#k-all:checked):has(#s-all:checked):has(#f-yes:checked) .ideas-empty{display:flex}"; strings.Contains(string(buildCSS(site)), r) {
+		t.Errorf("both kinds: the sheet calls Filed empty: %q", r)
 	}
 	// The file alone, with its date and without one.
 	fileOnly := *site
@@ -1406,6 +1482,77 @@ func TestTimesInSiteZone(t *testing.T) {
 		for _, w := range want {
 			if !strings.Contains(body, w) {
 				t.Errorf("zone %q: missing %q", zone, w)
+			}
+		}
+	}
+}
+
+// A project on hold is badged On hold everywhere, as the map legend names
+// the state; the icon tells parked (pause) from frozen (snowflake), and the
+// sentences that describe the hold keep the kind ("Parked since ...").
+func TestHoldBadgedOnHold(t *testing.T) {
+	for _, tc := range []struct{ kind, icon, word string }{
+		{"parked", "pause", "Parked"},
+		{"frozen", "snowflake", "Frozen"},
+	} {
+		site := loadSite(t, "site.json")
+		var ink *model.Project
+		for i := range site.Projects {
+			if site.Projects[i].Slug == "inkwell" {
+				ink = &site.Projects[i]
+			}
+		}
+		if ink == nil || ink.Tier != model.TierHold || ink.Hold == nil || ink.Hold.Kind != "parked" {
+			t.Fatal("fixture: inkwell is no longer parked")
+		}
+		ink.Hold.Kind = tc.kind
+		h := serve(site)
+		pill := `<span class="tp t-hold"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-` + tc.icon + `"></use></svg>On hold</span>`
+
+		board := get(t, h, "/").Body.String()
+		card, _, _ := strings.Cut(strings.SplitN(board, `data-live-card="inkwell"`, 2)[1], "</article>")
+		if !strings.Contains(card, pill) {
+			t.Errorf("%s: board card lacks the On hold pill %q", tc.kind, pill)
+		}
+
+		page := get(t, h, "/p/inkwell").Body.String()
+		if !strings.Contains(page, `<p class="pmeta">`+pill) {
+			t.Errorf("%s: project page pill is not %q", tc.kind, pill)
+		}
+		if w := "<b>" + tc.word + " since 21 Sep 2026.</b>"; !strings.Contains(page, w) {
+			t.Errorf("%s: the hold callout lacks %q", tc.kind, w)
+		}
+
+		mp := get(t, h, "/map").Body.String()
+		for _, w := range []string{
+			`<title>Inkwell (On hold)</title>`,
+			`aria-label="Inkwell, On hold"`,
+			`<use href="#i-pause"></use></svg></span>On hold</li>`,
+			`<a href="/p/inkwell">Inkwell</a> ` + pill,
+		} {
+			if !strings.Contains(mp, w) {
+				t.Errorf("%s: map lacks %q", tc.kind, w)
+			}
+		}
+
+		var ix searchIndex
+		if err := json.Unmarshal(get(t, h, "/api/search.json").Body.Bytes(), &ix); err != nil {
+			t.Fatal(err)
+		}
+		for _, p := range ix.Projects {
+			if p.Slug == "inkwell" && p.TierLabel != "On hold" {
+				t.Errorf("%s: palette names the state %q", tc.kind, p.TierLabel)
+			}
+		}
+
+		// The kind word is never the badge: no pill, chip, legend or label says
+		// it. The fixture's hold has commits since, so its chip is a sentence;
+		// TestQuietHoldBadgedOnce in internal/demo derives one without.
+		for name, body := range map[string]string{"board": board, "page": page, "map": mp} {
+			for _, w := range []string{"</svg>Parked</span>", "</svg>Frozen</span>", "<span>Parked</span>", "<span>Frozen</span>", "</svg></span>Parked</li>", "</svg></span>Frozen</li>", "(Parked)", "(Frozen)", ", Parked\"", ", Frozen\""} {
+				if strings.Contains(body, w) {
+					t.Errorf("%s: %s still badges the kind: %q", tc.kind, name, w)
+				}
 			}
 		}
 	}

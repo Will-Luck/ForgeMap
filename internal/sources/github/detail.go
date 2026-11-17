@@ -5,11 +5,12 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
 
-	"github.com/Will-Luck/waymark/internal/forge"
+	"github.com/Will-Luck/forgemap/internal/forge"
 )
 
 // TagPages caps the tag pages of 100 read per repo, as the Gitea client does.
@@ -33,11 +34,20 @@ func (c *Client) FetchDetail(ctx context.Context, repo forge.Repo, since time.Ti
 		return fmt.Errorf("%s %s: %w", full, what, err)
 	}
 
-	if d.Tags, err = c.Tags(ctx, full); err != nil {
+	var kept bool
+	if d.Tags, kept, err = c.tagsFor(ctx, repo); err != nil {
 		return nil, wrap("tags", err)
 	}
 	if d.Releases, err = c.Releases(ctx, full); err != nil {
 		return nil, wrap("releases", err)
+	}
+	if kept && !hasTags(d.Tags, d.Releases) {
+		// A release made without a push (in the web UI, say) names a tag the
+		// kept list lacks: ask again.
+		if d.Tags, err = c.Tags(ctx, full); err != nil {
+			return nil, wrap("tags", err)
+		}
+		c.keepTags(repo, d.Tags)
 	}
 	if open := repo.OpenIssues + repo.OpenPRs; open > 0 {
 		issues, prComments, complete, err := c.openIssues(ctx, full)
@@ -132,6 +142,58 @@ func (c *Client) Tags(ctx context.Context, full string) ([]forge.Tag, error) {
 	return tags, nil
 }
 
+// keptTags is a repo's tag list as last read, and the push it was read after.
+type keptTags struct {
+	pushedAt time.Time
+	tags     []forge.Tag
+}
+
+// tagsFor is a repo's tags: the kept list while the repo's pushed_at has not
+// moved since it was read (tags move only with a push), else the query. The
+// bool is true for the kept list.
+func (c *Client) tagsFor(ctx context.Context, repo forge.Repo) ([]forge.Tag, bool, error) {
+	c.mu.Lock()
+	e, ok := c.tags[strings.ToLower(repo.FullName)]
+	c.mu.Unlock()
+	if ok && !repo.PushedAt.IsZero() && e.pushedAt.Equal(repo.PushedAt.Time) {
+		return slices.Clone(e.tags), true, nil
+	}
+	tags, err := c.Tags(ctx, repo.FullName)
+	if err != nil {
+		return nil, false, err
+	}
+	c.keepTags(repo, tags)
+	return tags, false, nil
+}
+
+// keepTags keeps a repo's tag list with the pushed_at it was read at; a repo
+// that gives none keeps nothing.
+func (c *Client) keepTags(repo forge.Repo, tags []forge.Tag) {
+	if repo.PushedAt.IsZero() {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.tags == nil {
+		c.tags = map[string]keptTags{}
+	}
+	c.tags[strings.ToLower(repo.FullName)] = keptTags{pushedAt: repo.PushedAt.Time, tags: slices.Clone(tags)}
+}
+
+// hasTags reports whether tags names the tag of every release.
+func hasTags(tags []forge.Tag, rels []forge.Release) bool {
+	names := make(map[string]bool, len(tags))
+	for _, t := range tags {
+		names[t.Name] = true
+	}
+	for _, r := range rels {
+		if !names[r.TagName] {
+			return false
+		}
+	}
+	return true
+}
+
 // Releases returns published releases, newest first (drafts dropped).
 func (c *Client) Releases(ctx context.Context, full string) ([]forge.Release, error) {
 	var rels []forge.Release
@@ -195,7 +257,10 @@ func commitQuery(branch string, perPage, page int) url.Values {
 func (c *Client) Commits(ctx context.Context, full, branch string, since time.Time, maxPages int) (commits []forge.Commit, more bool, err error) {
 	for page := 1; page <= maxPages; page++ {
 		q := commitQuery(branch, pageSize, page)
-		q.Set("since", since.UTC().Format(time.RFC3339))
+		// The query asks from the start of since's UTC day, so its URL is the
+		// same all day and an unchanged page answers 304 (free with a token);
+		// the filter below keeps the exact window.
+		q.Set("since", since.UTC().Truncate(24*time.Hour).Format(time.RFC3339))
 		var batch []forge.Commit
 		h, err := c.getJSON(ctx, repoPath(full)+"/commits", q, &batch)
 		if err != nil {

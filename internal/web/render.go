@@ -10,21 +10,23 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
-	"github.com/Will-Luck/waymark/internal/model"
+	"github.com/Will-Luck/forgemap/internal/model"
 )
 
-var pageNames = []string{"overview", "project", "ideas", "ships", "map", "notfound"}
+var pageNames = []string{"overview", "project", "ideas", "ships", "map", "notfound", "signin", "denied", "setup", "settings", "forge"}
 
 type views struct {
 	base  *template.Template
 	pages map[string]*template.Template
 }
 
-// parseViews loads the layout and partials once, then clones them per page so
-// each page can define its own "main" block. Fragments run on base.
+// parseViews loads the two layouts (the main one and the bare one of setup
+// and sign-in) and the partials once, then clones them per page so each page
+// can define its own "main" block. Fragments run on base.
 func parseViews(fsys fs.FS, funcs template.FuncMap) (*views, error) {
-	base, err := template.New("base").Funcs(funcs).ParseFS(fsys, "templates/layout.html", "templates/parts/*.html")
+	base, err := template.New("base").Funcs(funcs).ParseFS(fsys, "templates/layout.html", "templates/bare.html", "templates/parts/*.html")
 	if err != nil {
 		return nil, err
 	}
@@ -61,7 +63,15 @@ type page struct {
 	Theme   string
 	Version string
 	Data    any
+	// Account is the header's Settings link and the footer's Sign in link,
+	// on a browser-set-up install only.
+	Account accountBar
 }
+
+// accountBar says which account link a page shows: On on a browser-set-up
+// install; Owner when the request is the signed-in owner's (Settings in the
+// header), else Sign in in the footer.
+type accountBar struct{ On, Owner bool }
 
 // sourceRow is a source status with its name in the page's words.
 type sourceRow struct {
@@ -92,6 +102,9 @@ func (s *server) newPage(r *http.Request, d *derived, nav, name string) *page {
 	if c, err := r.Cookie("theme"); err == nil && (c.Value == "light" || c.Value == "dark") {
 		p.Theme = c.Value
 	}
+	if m := s.opts.Manager; m != nil {
+		p.Account = accountBar{On: true, Owner: m.Authenticate(r).Session}
+	}
 	for _, src := range shownSources(d.site) {
 		row := sourceRow{SourceStatus: src, Label: sourceLabel(src.Name, d.site.Meta)}
 		p.Sources = append(p.Sources, row)
@@ -102,16 +115,9 @@ func (s *server) newPage(r *http.Request, d *derived, nav, name string) *page {
 	return p
 }
 
-// render executes into a buffer first, so a template error is a clean 500
-// rather than half a page.
+// render executes page name in the main layout (renderFrame).
 func (s *server) render(w http.ResponseWriter, r *http.Request, status int, name string, data any) {
-	t := s.views.pages[name]
-	var buf bytes.Buffer
-	if err := t.ExecuteTemplate(&buf, "layout", data); err != nil {
-		http.Error(w, "template error: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-	s.writeHTML(w, r, status, buf.Bytes(), "no-cache")
+	s.renderFrame(w, r, "layout", status, name, data)
 }
 
 func (s *server) fragment(w http.ResponseWriter, r *http.Request, name string, data any) {
@@ -185,6 +191,13 @@ func (s *server) card(w http.ResponseWriter, r *http.Request) {
 	s.fragment(w, r, "card", pr)
 }
 
+// overviewHead serves the overview's head (tiles, week strip, Needs you)
+// for live.js to swap in when the tick's overview hash moves on, followed by
+// the empty board's note while the site has no project.
+func (s *server) overviewHead(w http.ResponseWriter, r *http.Request) {
+	s.fragment(w, r, "overviewHeadLive", s.derived(s.src.Snapshot()).head)
+}
+
 func (s *server) live(w http.ResponseWriter, r *http.Request) {
 	d := s.derived(s.src.Snapshot())
 	pr := d.proj[r.PathValue("slug")]
@@ -203,6 +216,7 @@ func (s *server) ideas(w http.ResponseWriter, r *http.Request) {
 	}
 	p := s.newPage(r, d, "ideas", "Ideas")
 	v := d.ideas()
+	v.selectFrom(r.URL.Query())
 	p.Desc = "Feature ideas from the ideas file, ready to file as issues."
 	if !v.FromFile {
 		p.Desc = "Feature ideas from labelled issues."
@@ -241,16 +255,37 @@ func (s *server) notFound(w http.ResponseWriter, r *http.Request) {
 
 func (s *server) renderNotFound(w http.ResponseWriter, r *http.Request, d *derived, slug string) {
 	p := s.newPage(r, d, "", "Not found")
-	p.Data = notFoundView{Path: r.URL.Path, Slug: slug, Suggest: suggest(d.site, slug)}
+	p.Data = notFoundView{Path: clip(r.URL.Path), Slug: clip(slug), Suggest: suggest(d.site, slug)}
 	s.render(w, r, http.StatusNotFound, "notfound", p)
+}
+
+// maxSuggest is the longest q suggest compares, in runes. No slug is this
+// long, and comparing a long q with every slug and name costs seconds of CPU
+// (a 1 MB path took 3 s). The 404 page shows at most this much of a path.
+const maxSuggest = 64
+
+// distance is editDistance; tests count the calls.
+var distance = editDistance
+
+// clip cuts s to maxSuggest runes for the 404 page, marking a cut with "...".
+func clip(s string) string {
+	n := 0
+	for i := range s {
+		if n == maxSuggest {
+			return s[:i] + "..."
+		}
+		n++
+	}
+	return s
 }
 
 // suggest returns up to three projects whose slug or name is close to q.
 func suggest(site *model.Site, q string) []*model.Project {
-	q = strings.ToLower(strings.TrimSpace(q))
-	if q == "" {
+	q = strings.TrimSpace(q)
+	if q == "" || len(q) > utf8.UTFMax*maxSuggest || utf8.RuneCountInString(q) > maxSuggest {
 		return nil
 	}
+	q = strings.ToLower(q)
 	type scored struct {
 		p *model.Project
 		d int
@@ -258,7 +293,7 @@ func suggest(site *model.Site, q string) []*model.Project {
 	var all []scored
 	for i := range site.Projects {
 		p := &site.Projects[i]
-		d := min(editDistance(q, p.Slug), editDistance(q, strings.ToLower(p.Name)))
+		d := min(distance(q, p.Slug), distance(q, strings.ToLower(p.Name)))
 		if strings.Contains(p.Slug, q) || strings.Contains(strings.ToLower(p.Name), q) {
 			d = 0
 		}
@@ -313,6 +348,18 @@ func (s *server) healthz(w http.ResponseWriter, r *http.Request) {
 	for _, x := range site.Sources {
 		out.Sources = append(out.Sources, src{x.Name, x.OK, x.RefreshedAt, x.Error, x.Note})
 		out.OK = out.OK && x.OK
+	}
+	// While the page needs sign-in or setup is unfinished, a monitor (which
+	// carries no session) learns only whether all is well and when: no
+	// source names, no errors.
+	if m := s.opts.Manager; m != nil {
+		if st := m.Status(); st.SignInToView || !st.SetupDone {
+			writeJSON(w, r, http.StatusOK, struct {
+				OK          bool      `json:"ok"`
+				GeneratedAt time.Time `json:"generated_at"`
+			}{out.OK, out.GeneratedAt})
+			return
+		}
 	}
 	writeJSON(w, r, http.StatusOK, out)
 }

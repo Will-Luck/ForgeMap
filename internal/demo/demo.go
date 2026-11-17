@@ -11,9 +11,10 @@ import (
 	"sort"
 	"time"
 
-	"github.com/Will-Luck/waymark/internal/config"
-	"github.com/Will-Luck/waymark/internal/model"
-	"github.com/Will-Luck/waymark/internal/store"
+	"github.com/Will-Luck/forgemap/internal/config"
+	"github.com/Will-Luck/forgemap/internal/derive"
+	"github.com/Will-Luck/forgemap/internal/model"
+	"github.com/Will-Luck/forgemap/internal/store"
 )
 
 // FeedEvery is how often -demo touches its Docker feed, so the feed never
@@ -80,7 +81,7 @@ func Run(w *World, dir string, feedEvery time.Duration) (*Demo, error) {
 			{ID: "github", Type: "github", URL: d.GitHubURL, Token: "demo-token", Owners: []string{Owner}, Heatmap: true},
 		},
 		Projects: config.FileRef{Forge: "gitea", Repo: repo, Path: "projects.yaml"},
-		Ideas: config.Ideas{Labels: []string{"idea", "enhancement"}, Marker: "waymark-idea:",
+		Ideas: config.Ideas{Labels: []string{"idea", "enhancement"}, Marker: "forgemap-idea:",
 			File: config.FileRef{Forge: "gitea", Repo: repo, Path: "ideas.json"}},
 		NeedsYou: config.NeedsYou{Labels: []string{"needs-you", "decision"}, Assigned: true, ReviewRequests: true},
 		Notes:    config.Notes{Type: "markdown", Dir: notesDir, Markers: []string{"WAITING:", "@me"}},
@@ -162,8 +163,10 @@ func (w *World) WriteFeed(path string, mtime time.Time) error {
 	return os.Chtimes(path, mtime, mtime)
 }
 
-// ProbeHistory is a day of checks every ten minutes for each probe: up, or
-// down for the last six hours when it answers an error now.
+// ProbeHistory is a day of checks for each probe, derive.ProbeInterval apart
+// as the app makes them: up, or down for the last six hours when it answers
+// an error now. Failed checks further apart than derive.ProbeRunGap are not
+// in a row, so a coarser spacing would leave the outage unconfirmed.
 func (w *World) ProbeHistory() map[string][]model.ProbePoint {
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -173,10 +176,11 @@ func (w *World) ProbeHistory() map[string][]model.ProbePoint {
 		names = append(names, n)
 	}
 	sort.Strings(names)
+	step := int(derive.ProbeInterval / time.Minute)
 	for i, name := range names {
 		code := w.Probes[name]
 		var pts []model.ProbePoint
-		for m := 24 * 60; m >= 10; m -= 10 {
+		for m := 24 * 60; m >= step; m -= step {
 			at := w.Now.Add(-time.Duration(m) * time.Minute)
 			up := code < 400 || at.Before(w.Now.Add(-6*time.Hour))
 			pt := model.ProbePoint{At: at, Up: up}

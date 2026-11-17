@@ -1,14 +1,15 @@
-# Waymark example configuration. Copy to /config/waymark.yml (or point
-# WAYMARK_CONFIG at it). ${VAR} and $VAR are expanded from the environment, so
+# ForgeMap example configuration. Copy to /config/forgemap.yml (or point
+# FORGEMAP_CONFIG at it). ${VAR} and $VAR are expanded from the environment, so
 # tokens stay out of the file. Every key, its default and what it does:
 # docs/configuration.md.
 # listen: ":8080"              # the address the page is served on
 # data_dir: /data              # state.json and the last good projects and ideas files
 site:
-  title: Waymark
+  title: ForgeMap
   timezone: UTC
   you: [Mark]                  # names notes use for the owner (notes adapters only)
 include_private: false         # true shows private repos too: only behind a login
+refresh: true                  # false takes Refresh now away; POST /api/refresh then answers 404
 forges:
   - id: gitea                  # the key projects.yaml uses: "- gitea: owner/name"
     type: gitea                # gitea | forgejo (same API) | github
@@ -16,17 +17,18 @@ forges:
     token: ${GITEA_TOKEN}
     owners: [acme]             # users/orgs tracked; empty = the token user's own repos only
     heatmap: true
+    forks: false               # true tracks forks too; a fork the projects file names is tracked anyway
   - id: github
     type: github
     token: ${GITHUB_TOKEN}     # optional; without it only repos named in projects.yaml, 60 req/h
     owners: [acme]
 projects:                      # optional overrides
   file: /config/projects.yaml
-  # or: {forge: gitea, repo: acme/waymark-config, path: projects.yaml}
+  # or: {forge: gitea, repo: acme/forgemap-config, path: projects.yaml}
 ideas:
   labels: [idea, enhancement]  # open issues with these labels become ideas
   file: ""                     # optional ideas.json; same repo-or-file choice as projects
-  marker: "waymark-idea:"
+  marker: "forgemap-idea:"
 needs_you:
   labels: [needs-you, decision]
   assigned: true               # open issues assigned to the token user -> Decide

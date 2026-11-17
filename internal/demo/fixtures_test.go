@@ -15,8 +15,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Will-Luck/waymark/internal/derive"
-	"github.com/Will-Luck/waymark/internal/model"
+	"github.com/Will-Luck/forgemap/internal/derive"
+	"github.com/Will-Luck/forgemap/internal/model"
 )
 
 var update = flag.Bool("update", false, "rewrite the testdata fixtures from the demo world")
@@ -73,7 +73,7 @@ func forgeFixtures(t *testing.T) map[string][]byte {
 		"gitea/ledger_pulls.json":     get(t, w, g+"ledger/pulls?limit=10&sort=recentupdate&state=open"),
 		"gitea/ledger_runs.json":      get(t, w, g+"ledger/actions/runs?limit=5"),
 		"gitea/heatmap.json":          get(t, w, "/api/v1/users/mark/heatmap"),
-		"gitea/issue_search.json":     get(t, w, "/api/v1/repos/issues/search?limit=50&q=waymark-idea&state=all&type=issues"),
+		"gitea/issue_search.json":     get(t, w, "/api/v1/repos/issues/search?limit=50&q=forgemap-idea&state=all&type=issues"),
 		"gitea/raw_404.json":          get(t, w, g+"beacon/raw/missing.md"),
 		"fdroid/index-v1.json":        get(t, w, "/fdroid/repo/index-v1.json"),
 		"docker/docker_ps.jsonl":      w.FeedJSONL(),
@@ -91,10 +91,10 @@ func forgeFixtures(t *testing.T) map[string][]byte {
 var stampRe = regexp.MustCompile(`"(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z)"`)
 
 // pin makes a generated site reproducible: the fake servers' random ports
-// become fixed names, and the run's live probe checks, whose time and
-// latency are the machine's, are set to the run's own clock and 21 ms.
-// Every other time comes from the world, so a time after the run's clock is
-// one of those checks. The project hashes are worked out again after.
+// become fixed names, and the latency of the run's own probe checks (every
+// check at or after fixedNow; they carry the app's clock) is set to 21 ms,
+// 0 when down. A time after the run's clock can only be a machine time, and
+// is set to the run's clock. The project hashes are worked out again after.
 func pin(t *testing.T, s *model.Site, d *Demo) []byte {
 	t.Helper()
 	b, err := json.Marshal(s)
@@ -127,7 +127,7 @@ func pin(t *testing.T, s *model.Site, d *Demo) []byte {
 				pr.LatencyMS = 21
 			}
 			for k := range pr.History {
-				if h := &pr.History[k]; h.At.Equal(out.GeneratedAt) {
+				if h := &pr.History[k]; !h.At.Before(fixedNow) {
 					h.LatencyMS = 0
 					if h.Up {
 						h.LatencyMS = 21

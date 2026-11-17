@@ -3,6 +3,7 @@ package model
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"sync"
@@ -25,10 +26,23 @@ type Source interface {
 	// Subscribe returns a channel of changes and a cancel func. Slow
 	// subscribers drop changes rather than block the producer.
 	Subscribe() (<-chan Change, func())
-	// Refresh asks for an immediate cycle. It returns once the cycle is
-	// queued, not when it finishes.
-	Refresh(ctx context.Context) error
+	// Refresh asks for an early cycle and says what it did: queued one, or
+	// absorbed the call because one was queued less than the interval ago.
+	// It returns once a cycle is queued, not when it finishes;
+	// ErrRefreshOff when refreshes are turned off.
+	Refresh(ctx context.Context) (Refreshed, error)
 }
+
+// Refreshed is what a refresh request did. Queued: a cycle was queued.
+// Otherwise one was queued at Last, and the next can start at Next.
+type Refreshed struct {
+	Queued     bool
+	Last, Next time.Time
+}
+
+// ErrRefreshOff is Refresh's answer when the config turns refreshes off
+// (refresh: false).
+var ErrRefreshOff = errors.New("refresh is off")
 
 // StaticSource serves a fixed Site, e.g. testdata/site.json. It is used for
 // web development (-fixture) and handler tests.
@@ -71,10 +85,11 @@ func (s *StaticSource) Subscribe() (<-chan Change, func()) {
 	}
 }
 
-// Refresh on a fixture emits a tick so the live path can be exercised.
-func (s *StaticSource) Refresh(ctx context.Context) error {
+// Refresh on a fixture emits a tick so the live path can be exercised; it
+// always queues.
+func (s *StaticSource) Refresh(ctx context.Context) (Refreshed, error) {
 	s.Publish(Change{Kind: "tick", At: time.Now()})
-	return nil
+	return Refreshed{Queued: true}, nil
 }
 
 // Publish sends a change to every subscriber without blocking.

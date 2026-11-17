@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Will-Luck/waymark/internal/model"
+	"github.com/Will-Luck/forgemap/internal/model"
 )
 
 // "Since you last looked". The server renders 14 days of events, each
@@ -173,7 +173,7 @@ func subject(e model.Event) (string, bool) {
 		}
 	case "container":
 		if rest, ok := strings.CutPrefix(e.Text, "Container "); ok {
-			for _, suf := range []string{" is running again", " stopped", " is missing"} {
+			for _, suf := range []string{" is running again", " stopped", " is missing", " is restarting", " is paused"} {
 				if name, ok := strings.CutSuffix(rest, suf); ok {
 					return name, true
 				}
@@ -231,6 +231,10 @@ func foldWords(newest model.Event) string {
 			return "Container {subj} stopped and came back {times}"
 		case strings.HasSuffix(newest.Text, " is missing"):
 			return "Container {subj} stopped {times}, now missing"
+		case strings.HasSuffix(newest.Text, " is restarting"):
+			return "Container {subj} stopped {times}, now restarting"
+		case strings.HasSuffix(newest.Text, " is paused"):
+			return "Container {subj} stopped {times}, now paused"
 		}
 		return "Container {subj} stopped {times}, still stopped"
 	}

@@ -2,8 +2,12 @@ package web
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
+	"time"
+
+	"github.com/Will-Luck/forgemap/internal/model"
 )
 
 func writeJSON(w http.ResponseWriter, r *http.Request, status int, v any) {
@@ -47,16 +51,30 @@ func (s *server) apiSearch(w http.ResponseWriter, r *http.Request) {
 	writeJSONBytes(w, r, http.StatusOK, s.derived(s.src.Snapshot()).search)
 }
 
-// apiRefresh asks the source for a cycle. The source rate-limits; a request
-// another site makes the browser send is refused.
+// apiRefresh asks the source for a refresh and says what happened: 202
+// {"ok": true, "queued": true}, or 200 {"ok": true, "queued": false,
+// "last_at", "next_at"} when one was queued less than the interval ago ("ok"
+// as 0.2.x answered it). With refreshes turned off the route is not there
+// (404). A request another site makes the browser send is refused.
 func (s *server) apiRefresh(w http.ResponseWriter, r *http.Request) {
+	if s.src.Snapshot().Meta.RefreshOff {
+		writeJSON(w, r, http.StatusNotFound, map[string]string{"error": "not found"})
+		return
+	}
 	if site := r.Header.Get("Sec-Fetch-Site"); site == "cross-site" || site == "same-site" {
 		writeJSON(w, r, http.StatusForbidden, map[string]string{"error": "cross-site request"})
 		return
 	}
-	if err := s.src.Refresh(r.Context()); err != nil {
+	got, err := s.src.Refresh(r.Context())
+	switch {
+	case errors.Is(err, model.ErrRefreshOff):
+		writeJSON(w, r, http.StatusNotFound, map[string]string{"error": "not found"})
+	case err != nil:
 		writeJSON(w, r, http.StatusServiceUnavailable, map[string]any{"ok": false, "error": err.Error()})
-		return
+	case got.Queued:
+		writeJSON(w, r, http.StatusAccepted, map[string]any{"ok": true, "queued": true})
+	default:
+		writeJSON(w, r, http.StatusOK, map[string]any{"ok": true, "queued": false,
+			"last_at": got.Last.UTC().Format(time.RFC3339), "next_at": got.Next.UTC().Format(time.RFC3339)})
 	}
-	writeJSON(w, r, http.StatusAccepted, map[string]any{"ok": true})
 }

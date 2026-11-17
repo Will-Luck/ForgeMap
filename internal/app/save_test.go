@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Will-Luck/waymark/internal/store"
+	"github.com/Will-Luck/forgemap/internal/store"
 )
 
 // savedAt is the saved_at stamp of state.json on disk. Every write puts the
@@ -24,16 +24,18 @@ func savedAt(t *testing.T, dir string) time.Time {
 	return st.SavedAt
 }
 
-// settle runs the world once, then one more probe pass and assemble, and
-// writes the state at fixedNow: from here an unchanged world changes
-// nothing in the file. It returns the app's clock for the test to move.
+// settle runs the world once, then one more probe pass and assemble a probe
+// interval later (so an outage the first pass saw is confirmed by the
+// second, two checks in a row), and writes the state then: from here an
+// unchanged world changes nothing in the file. It returns the app's clock
+// for the test to move.
 func settle(t *testing.T, w *world) *time.Time {
 	t.Helper()
 	ctx := context.Background()
 	if _, err := w.app.RunOnce(ctx); err != nil {
 		t.Fatal(err)
 	}
-	clock := fixedNow
+	clock := fixedNow.Add(ProbeEvery)
 	w.app.now = func() time.Time { return clock }
 	w.app.collectProbes(ctx)
 	w.app.assemble()

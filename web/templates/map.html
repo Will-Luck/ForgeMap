@@ -4,6 +4,8 @@
     <h1 class="page-title">{{icon "orbit"}}Map</h1>
     <p class="lead">Every project as a star. <b>Colour and the corner badge show its state</b>; the icon inside is the project. Size shows the last 12 weeks of commits, lines are relations. <span hidden data-js-show>Drag a star to move it. Select one to open the project.</span></p>
   </header>
+  <details class="map-fold" data-map-fold open>
+    <summary>{{icon "chevron-down" "chev"}}<span class="when-closed">Show map</span><span class="when-open">Hide map</span></summary>
   <aside class="legend wrap" aria-label="Legend">
       <h2 class="legend-h">States</h2>
       <ul>
@@ -21,6 +23,7 @@
     </svg>
     </div>
   </div>
+  </details>
   <script type="application/json" id="graph">{{$v.JSON}}</script>
 
   <section class="wrap block map-list" aria-labelledby="ml-h">

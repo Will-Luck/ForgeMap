@@ -1,0 +1,9 @@
+# Weekly pull requests that bump the pinned actions (a full commit SHA with
+# its version in a comment). Go modules are bumped by hand, and the base
+# images follow their tags (golang:1.27-alpine, alpine:3).
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly

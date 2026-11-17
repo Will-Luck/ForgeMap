@@ -39,13 +39,13 @@ func TestFetchAPIUnixSocket(t *testing.T) {
 	srv.Start()
 	defer srv.Close()
 
-	f, err := FetchAPI(context.Background(), "unix://"+sock, "waymark/1.2.3")
+	f, err := FetchAPI(context.Background(), "unix://"+sock, "ForgeMap/1.2.3")
 	if err != nil {
 		t.Fatal(err)
 	}
 	mu.Lock()
 	defer mu.Unlock()
-	if len(reqs) != 1 || reqs[0] != "GET /containers/json?all=1 waymark/1.2.3" {
+	if len(reqs) != 1 || reqs[0] != "GET /containers/json?all=1 ForgeMap/1.2.3" {
 		t.Fatalf("requests = %v, want one unversioned GET naming its client", reqs)
 	}
 	if len(f.Containers) != 2 {
@@ -78,19 +78,19 @@ func TestFetchAPITCPAndErrors(t *testing.T) {
 		http.Error(w, "no", http.StatusForbidden)
 	}))
 	defer srv.Close()
-	f, err := FetchAPI(context.Background(), "tcp://"+strings.TrimPrefix(srv.URL, "http://"), "waymark/dev")
+	f, err := FetchAPI(context.Background(), "tcp://"+strings.TrimPrefix(srv.URL, "http://"), "ForgeMap/dev")
 	if err != nil || len(f.Containers) != 2 {
 		t.Fatalf("tcp: %v %+v", err, f)
 	}
 	bad := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { http.Error(w, "no", http.StatusForbidden) }))
 	defer bad.Close()
-	if _, err := FetchAPI(context.Background(), "tcp://"+strings.TrimPrefix(bad.URL, "http://"), "waymark/dev"); err == nil || !strings.Contains(err.Error(), "403") {
+	if _, err := FetchAPI(context.Background(), "tcp://"+strings.TrimPrefix(bad.URL, "http://"), "ForgeMap/dev"); err == nil || !strings.Contains(err.Error(), "403") {
 		t.Errorf("403 err = %v", err)
 	}
-	if _, err := FetchAPI(context.Background(), "http://example.com", "waymark/dev"); err == nil {
+	if _, err := FetchAPI(context.Background(), "http://example.com", "ForgeMap/dev"); err == nil {
 		t.Error("a host without unix:// or tcp:// must fail")
 	}
-	if _, err := FetchAPI(context.Background(), "unix://"+filepath.Join(t.TempDir(), "none.sock"), "waymark/dev"); err == nil {
+	if _, err := FetchAPI(context.Background(), "unix://"+filepath.Join(t.TempDir(), "none.sock"), "ForgeMap/dev"); err == nil {
 		t.Error("a missing socket must fail")
 	}
 }
@@ -113,7 +113,7 @@ func TestFeedLabelsParsed(t *testing.T) {
 
 func TestHostCredentialsNeverInErrors(t *testing.T) {
 	for _, host := range []string{"tcp://u:secret@127.0.0.1:1", "tcp://127.0.0.1:1/secret", "tcp://127.0.0.1:1?k=secret", "tcp://%zzsecret", "ftp://u:secret@h:1"} {
-		_, err := FetchAPI(context.Background(), host, "waymark/dev")
+		_, err := FetchAPI(context.Background(), host, "ForgeMap/dev")
 		if err == nil {
 			t.Errorf("%s: want an error", host)
 			continue
@@ -123,7 +123,7 @@ func TestHostCredentialsNeverInErrors(t *testing.T) {
 		}
 	}
 	// A reachable-looking host that refuses the connection still names only scheme and host.
-	_, err := FetchAPI(context.Background(), "tcp://127.0.0.1:1", "waymark/dev")
+	_, err := FetchAPI(context.Background(), "tcp://127.0.0.1:1", "ForgeMap/dev")
 	if err == nil || !strings.Contains(err.Error(), "tcp://127.0.0.1:1") {
 		t.Errorf("err = %v", err)
 	}
@@ -136,7 +136,7 @@ func TestRedirectIsNotFollowed(t *testing.T) {
 		http.Redirect(w, r, "/containers/stop", http.StatusFound)
 	}))
 	defer srv.Close()
-	_, err := FetchAPI(context.Background(), "tcp://"+strings.TrimPrefix(srv.URL, "http://"), "waymark/dev")
+	_, err := FetchAPI(context.Background(), "tcp://"+strings.TrimPrefix(srv.URL, "http://"), "ForgeMap/dev")
 	if err == nil || !strings.Contains(err.Error(), "302") {
 		t.Errorf("err = %v, want the 302 status error", err)
 	}

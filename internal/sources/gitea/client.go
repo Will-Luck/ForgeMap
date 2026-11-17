@@ -1,4 +1,4 @@
-// Package gitea is a read-only client for the few Gitea API calls Waymark
+// Package gitea is a read-only client for the few Gitea API calls ForgeMap
 // makes. The token is only ever sent as "Authorization: token <t>" to the
 // configured base URL.
 package gitea
@@ -17,12 +17,15 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/Will-Luck/waymark/internal/forge"
+	"github.com/Will-Luck/forgemap/internal/forge"
 )
 
 const (
 	pageSize = 50
 	maxBody  = 16 << 20
+	// ListPages caps the pages read of one owner's repo list: 2,000 repos at
+	// pageSize.
+	ListPages = 40
 )
 
 type Client struct {
@@ -31,11 +34,24 @@ type Client struct {
 	Base  string
 	Token string
 	HTTP  *http.Client
-	// UserAgent goes with every request; New sets waymark/dev.
+	// UserAgent goes with every request; New sets ForgeMap/dev.
 	UserAgent string
+	// Retry tries a read again when it failed fast (forge.Retry); tests make
+	// it wait nothing.
+	Retry forge.Retry
+	// HideBody leaves answer bodies out of error texts: a browser-set-up
+	// install, where an address is typed into a form. HTTPError.Body still
+	// holds the body.
+	HideBody bool
 
 	mu sync.Mutex
 	me string // the token user's login, once read
+	// routes: the list route that last answered each owner other than the
+	// token user (by lower-case owner), asked first next time.
+	routes map[string]string
+	// others: the last ListRepos read /user/repos and left out repos the
+	// token sees that no listed owner owns (OthersSeen).
+	others bool
 }
 
 func New(id, base, token string) *Client {
@@ -44,7 +60,7 @@ func New(id, base, token string) *Client {
 		Base:      strings.TrimRight(base, "/"),
 		Token:     token,
 		HTTP:      &http.Client{Timeout: 30 * time.Second},
-		UserAgent: "waymark/dev",
+		UserAgent: "ForgeMap/dev",
 	}
 }
 
@@ -53,11 +69,18 @@ type HTTPError struct {
 	Status int
 	Path   string
 	Body   string
+	hide   bool // the client's HideBody: Error leaves Body out
 }
 
 func (e *HTTPError) Error() string {
+	if e.hide {
+		return fmt.Sprintf("gitea %s: HTTP %d", e.Path, e.Status)
+	}
 	return fmt.Sprintf("gitea %s: HTTP %d %s", e.Path, e.Status, clip(strings.TrimSpace(e.Body), 160))
 }
+
+// HTTPStatus is the answer's status, for forge.Status.
+func (e *HTTPError) HTTPStatus() int { return e.Status }
 
 // clip cuts s to at most n bytes without splitting a character.
 func clip(s string, n int) string {
@@ -79,27 +102,43 @@ func IsNotFound(err error) bool {
 // IsNotFound is the package's IsNotFound, for forge.FileSource.
 func (c *Client) IsNotFound(err error) bool { return IsNotFound(err) }
 
+// OthersSeen reports whether the last ListRepos saw repos the token can read
+// that no listed owner owns (forge.OthersSeer).
+func (c *Client) OthersSeen() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.others
+}
+
 func (c *Client) do(ctx context.Context, path string, q url.Values) ([]byte, http.Header, error) {
+	return c.read(ctx, path, q, maxBody)
+}
+
+// read GETs path with query q and returns at most limit bytes of the answer:
+// a longer one is cut there, so it fails to decode.
+func (c *Client) read(ctx context.Context, path string, q url.Values, limit int64) ([]byte, http.Header, error) {
 	u := c.Base + path
 	if len(q) > 0 {
 		u += "?" + q.Encode()
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
-	if err != nil {
-		return nil, nil, err
-	}
-	if c.Token != "" {
-		req.Header.Set("Authorization", "token "+c.Token)
-	}
-	req.Header.Set("Accept", "application/json")
-	if c.UserAgent != "" {
-		req.Header.Set("User-Agent", c.UserAgent)
 	}
 	hc := c.HTTP
 	if hc == nil {
 		hc = http.DefaultClient
 	}
-	resp, err := hc.Do(req)
+	resp, err := c.Retry.Do(ctx, func() (*http.Response, error) {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+		if err != nil {
+			return nil, err
+		}
+		if c.Token != "" {
+			req.Header.Set("Authorization", "token "+c.Token)
+		}
+		req.Header.Set("Accept", "application/json")
+		if c.UserAgent != "" {
+			req.Header.Set("User-Agent", c.UserAgent)
+		}
+		return hc.Do(req)
+	})
 	if err != nil {
 		// The URL carries no secret, but keep the message short.
 		var ue *url.Error
@@ -109,18 +148,23 @@ func (c *Client) do(ctx context.Context, path string, q url.Values) ([]byte, htt
 		return nil, nil, err
 	}
 	defer resp.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(resp.Body, maxBody))
+	body, err := io.ReadAll(io.LimitReader(resp.Body, limit))
 	if err != nil {
 		return nil, nil, fmt.Errorf("gitea %s: %w", path, err)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		return nil, resp.Header, &HTTPError{Status: resp.StatusCode, Path: path, Body: string(body)}
+		return nil, resp.Header, &HTTPError{Status: resp.StatusCode, Path: path, Body: string(body), hide: c.HideBody}
 	}
 	return body, resp.Header, nil
 }
 
 func (c *Client) getJSON(ctx context.Context, path string, q url.Values, out any) (http.Header, error) {
-	body, h, err := c.do(ctx, path, q)
+	return c.readJSON(ctx, path, q, maxBody, out)
+}
+
+// readJSON is read decoded into out.
+func (c *Client) readJSON(ctx context.Context, path string, q url.Values, limit int64, out any) (http.Header, error) {
+	body, h, err := c.read(ctx, path, q, limit)
 	if err != nil {
 		return h, err
 	}
@@ -183,36 +227,155 @@ func (c *Client) login(ctx context.Context) (string, error) {
 	return u.Login, nil
 }
 
-// ListRepos returns the repos owned by one of owners (compared
-// case-insensitively) among those the token can see (/user/repos, paginated).
-// That list also holds repos the user collaborates on and its organisations'
-// repos, so no owners means the token user's own repos only, as on GitHub.
+// ListRepos returns the repos of each owner, as the GitHub client does: the
+// token user's own from /user/repos (private ones included; that list also
+// holds repos the user collaborates on and its organisations' repos, which
+// are left out), and any other owner's from ownerRepos. No owners means the
+// token user's. An owner that is neither (both answer 404, a typo) gives no
+// repos and no error: the app logs an owner with none once. A list cut at
+// ListPages comes back with a *forge.ListCapped beside the repos read.
 func (c *Client) ListRepos(ctx context.Context, owners []string) ([]forge.Repo, error) {
+	me, err := c.login(ctx)
+	if err != nil {
+		return nil, err
+	}
 	if len(owners) == 0 {
-		me, err := c.login(ctx)
-		if err != nil {
-			return nil, err
-		}
 		owners = []string{me}
 	}
 	var all []forge.Repo
-	for page := 1; page <= 40; page++ {
-		var batch []forge.Repo
-		q := url.Values{"limit": {strconv.Itoa(pageSize)}, "page": {strconv.Itoa(page)}}
-		if _, err := c.getJSON(ctx, "/user/repos", q, &batch); err != nil {
+	var cut []forge.CutList
+	seen, done := map[string]bool{}, map[string]bool{}
+	others := 0
+	for _, o := range owners {
+		if done[strings.ToLower(o)] {
+			continue
+		}
+		done[strings.ToLower(o)] = true
+		var repos []forge.Repo
+		var capped bool
+		if strings.EqualFold(o, me) {
+			repos, capped, err = c.repoPages(ctx, "/user/repos")
+		} else {
+			repos, capped, err = c.ownerRepos(ctx, o)
+		}
+		if IsNotFound(err) {
+			continue
+		}
+		if err != nil {
 			return nil, err
 		}
-		for _, r := range batch {
-			r.Forge = c.id
-			if ownedBy(r, owners) {
-				all = append(all, r)
-			}
+		if capped {
+			cut = append(cut, forge.CutList{Owner: o, Read: len(repos)})
 		}
-		if len(batch) < pageSize {
-			break
+		for _, r := range repos {
+			if strings.EqualFold(o, me) && !ownedBy(r, owners) {
+				others++
+			}
+			k := strings.ToLower(r.FullName)
+			if seen[k] || strings.EqualFold(o, me) && !ownedBy(r, []string{me}) {
+				continue
+			}
+			seen[k] = true
+			all = append(all, r)
 		}
 	}
+	c.mu.Lock()
+	c.others = others > 0
+	c.mu.Unlock()
+	if len(cut) > 0 {
+		return all, &forge.ListCapped{Cut: cut}
+	}
 	return all, nil
+}
+
+// ownerRepos lists an owner other than the token user: an organisation from
+// /orgs/{org}/repos, and any other user from /users/{user}/repos once /orgs/
+// says 404. A 403 from /orgs/ (a token without the read:organization scope)
+// also moves on to /users/, which Gitea serves for an organisation too. The
+// route that answers is asked first at the next list, so a user costs one
+// request a list, not a 404 first; a route that answers 404 is forgotten.
+// An owner neither route has is a 404.
+func (c *Client) ownerRepos(ctx context.Context, o string) ([]forge.Repo, bool, error) {
+	key := strings.ToLower(o)
+	orgs, users := "/orgs/"+url.PathEscape(o)+"/repos", "/users/"+url.PathEscape(o)+"/repos"
+	movesOn := func(path string, err error) bool {
+		return IsNotFound(err) || path == orgs && forge.Status(err) == http.StatusForbidden
+	}
+	c.mu.Lock()
+	known := c.routes[key]
+	c.mu.Unlock()
+	order := []string{orgs, users}
+	if known == users {
+		order = []string{users, orgs}
+	}
+	var err, notFound error
+	for _, path := range order {
+		var repos []forge.Repo
+		var capped bool
+		repos, capped, err = c.repoPages(ctx, path)
+		if err == nil {
+			c.setRoute(key, path)
+			return repos, capped, nil
+		}
+		if !movesOn(path, err) {
+			return nil, false, err
+		}
+		if IsNotFound(err) {
+			notFound = err
+		}
+	}
+	c.setRoute(key, "")
+	if notFound != nil {
+		return nil, false, notFound
+	}
+	return nil, false, err
+}
+
+// setRoute keeps the list route that answered owner key; "" forgets it.
+func (c *Client) setRoute(key, path string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if path == "" {
+		delete(c.routes, key)
+		return
+	}
+	if c.routes == nil {
+		c.routes = map[string]string{}
+	}
+	c.routes[key] = path
+}
+
+// repoPages reads one repo list page by page until X-Total-Count repos are
+// read or a page comes back empty, not on a short page: a server whose page
+// size (MAX_RESPONSE_ITEMS) is below pageSize answers short pages before the
+// last. A page of repos already read means the server ignored the page
+// number. The bool is true when ListPages pages were read and more may
+// remain.
+func (c *Client) repoPages(ctx context.Context, path string) ([]forge.Repo, bool, error) {
+	var repos []forge.Repo
+	seen := map[string]bool{}
+	for page := 1; page <= ListPages; page++ {
+		var batch []forge.Repo
+		q := url.Values{"limit": {strconv.Itoa(pageSize)}, "page": {strconv.Itoa(page)}}
+		h, err := c.getJSON(ctx, path, q, &batch)
+		if err != nil {
+			return nil, false, err
+		}
+		fresh := 0
+		for _, r := range batch {
+			if k := strings.ToLower(r.FullName); !seen[k] {
+				seen[k] = true
+				r.Forge = c.id
+				repos = append(repos, r)
+				fresh++
+			}
+		}
+		total, terr := strconv.Atoi(h.Get("X-Total-Count"))
+		if fresh == 0 || terr == nil && len(repos) >= total {
+			return repos, false, nil
+		}
+	}
+	return repos, true, nil
 }
 
 // Repo reads one repo by owner/name (GET /repos/{full}). A missing repo is an

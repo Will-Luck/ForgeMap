@@ -3,17 +3,21 @@ package gitea
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 	"unicode/utf8"
 
-	"github.com/Will-Luck/waymark/internal/forge"
+	"github.com/Will-Luck/forgemap/internal/forge"
 )
 
 const fixtures = "../../../testdata/gitea/"
@@ -38,6 +42,7 @@ type fakeGitea struct {
 
 func newFake(t *testing.T) (*fakeGitea, *Client) {
 	f := &fakeGitea{t: t, routes: map[string]func(http.ResponseWriter, *http.Request){}}
+	f.routes["/api/v1/user"] = func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte(`{"login":"acme"}`)) }
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		f.mu.Lock()
 		f.seen = append(f.seen, r.URL.RequestURI())
@@ -57,7 +62,9 @@ func newFake(t *testing.T) (*fakeGitea, *Client) {
 		h(w, r)
 	}))
 	t.Cleanup(srv.Close)
-	return f, New("gitea", srv.URL+"/api/v1", "s3cret")
+	c := New("gitea", srv.URL+"/api/v1", "s3cret")
+	c.Retry = forge.Retry{Sleep: func(context.Context, time.Duration) error { return nil }}
+	return f, c
 }
 
 func (f *fakeGitea) file(path, name string) {
@@ -91,7 +98,11 @@ func beaconRepo(t *testing.T) forge.Repo {
 
 func TestListRepos(t *testing.T) {
 	f, c := newFake(t)
-	f.file("/api/v1/user/repos", "user_repos.json")
+	list := fixture(t, "user_repos.json")
+	f.routes["/api/v1/user/repos"] = func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Total-Count", "10")
+		_, _ = w.Write(list)
+	}
 	repos, err := c.ListRepos(context.Background(), []string{"acme"})
 	if err != nil {
 		t.Fatal(err)
@@ -118,8 +129,14 @@ func TestListRepos(t *testing.T) {
 	if want := time.Date(2026, 10, 31, 17, 0, 0, 0, time.UTC); !b.UpdatedAt.Equal(want) || b.UpdatedAt.Location() != time.UTC {
 		t.Errorf("updated_at = %v", b.UpdatedAt)
 	}
-	if len(f.seen) != 1 || !strings.Contains(f.seen[0], "limit=50") {
-		t.Errorf("requests = %v (10 < 50 needs one page)", f.seen)
+	var lists []string
+	for _, s := range f.seen {
+		if strings.HasPrefix(s, "/api/v1/user/repos") {
+			lists = append(lists, s)
+		}
+	}
+	if len(lists) != 1 || !strings.Contains(lists[0], "limit=50") {
+		t.Errorf("list requests = %v (X-Total-Count 10: one page)", lists)
 	}
 	f.check()
 }
@@ -272,7 +289,7 @@ func TestErrorsCarryStatusNotToken(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "401") || strings.Contains(err.Error(), "s3cret") {
 		t.Errorf("err = %v", err)
 	}
-	if _, err := c.Raw(context.Background(), "acme/waymark-config", "projects.yaml", ""); !IsNotFound(err) {
+	if _, err := c.Raw(context.Background(), "acme/forgemap-config", "projects.yaml", ""); !IsNotFound(err) {
 		t.Errorf("missing raw file: IsNotFound false for %v", err)
 	}
 	// A long body is cut at 160 bytes, never inside a character: after 159
@@ -346,7 +363,7 @@ func TestHeatmapAndSearchDecode(t *testing.T) {
 	f.file("/api/v1/users/mark/heatmap", "heatmap.json")
 	f.routes["/api/v1/repos/issues/search"] = func(w http.ResponseWriter, r *http.Request) {
 		q := r.URL.Query()
-		if q.Get("q") != "waymark-idea" || q.Get("state") != "all" || q.Get("type") != "issues" {
+		if q.Get("q") != "forgemap-idea" || q.Get("state") != "all" || q.Get("type") != "issues" {
 			t.Errorf("search query = %s", r.URL.RawQuery)
 		}
 		_, _ = w.Write(fixture(t, "issue_search.json"))
@@ -355,7 +372,7 @@ func TestHeatmapAndSearchDecode(t *testing.T) {
 	if err != nil || len(pts) != 271 || pts[0].Timestamp != 1761562800 || pts[0].Contributions != 5 {
 		t.Errorf("heatmap = %d %v", len(pts), err)
 	}
-	is, err := c.SearchIssues(context.Background(), "waymark-idea")
+	is, err := c.SearchIssues(context.Background(), "forgemap-idea")
 	if err != nil || len(is) != 1 || is[0].Number != 15 || is[0].Repository == nil || is[0].Repository.FullName != "acme/beacon" {
 		t.Errorf("search = %+v %v", is, err)
 	}
@@ -444,8 +461,9 @@ func TestListReposFiltersOwners(t *testing.T) {
 }
 
 // /user/repos also lists repos the user collaborates on and its orgs' repos.
-// With no owners only the token user's own are kept (as on GitHub); listing
-// an org or another user brings theirs in. The user is read once.
+// With no owners only the token user's own are kept (as on GitHub); an org
+// or another user is read from its own list (TestListReposPerOwner). The
+// user is read once.
 func TestListReposNoOwnersMeansOwn(t *testing.T) {
 	f, c := newFake(t)
 	f.routes["/api/v1/user"] = func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte(`{"login":"Mark"}`)) }
@@ -472,9 +490,6 @@ func TestListReposNoOwnersMeansOwn(t *testing.T) {
 		if got := strings.Join(names(owners), " "); got != "mark/tool mark/notes" {
 			t.Errorf("owners %v: repos = %s, want the token user's own only", owners, got)
 		}
-	}
-	if got := strings.Join(names([]string{"acme", "other"}), " "); got != "other/secret acme/app" {
-		t.Errorf("owners [acme other]: repos = %s", got)
 	}
 	users := 0
 	for _, s := range f.seen {
@@ -526,7 +541,7 @@ func TestMe(t *testing.T) {
 	f.check()
 }
 
-// The client names itself: waymark/dev until the app sets its version.
+// The client names itself: ForgeMap/dev until the app sets its version.
 func TestUserAgent(t *testing.T) {
 	f, c := newFake(t)
 	var got []string
@@ -534,7 +549,7 @@ func TestUserAgent(t *testing.T) {
 		got = append(got, r.UserAgent())
 		_, _ = w.Write([]byte(`{"login":"mark"}`))
 	}
-	for _, ua := range []string{"", "waymark/1.2.3"} {
+	for _, ua := range []string{"", "ForgeMap/1.2.3"} {
 		if ua != "" {
 			c.UserAgent = ua
 		}
@@ -542,7 +557,7 @@ func TestUserAgent(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if strings.Join(got, " ") != "waymark/dev waymark/1.2.3" {
+	if strings.Join(got, " ") != "ForgeMap/dev ForgeMap/1.2.3" {
 		t.Errorf("User-Agents = %q", got)
 	}
 }
@@ -591,4 +606,290 @@ func TestRepoByName(t *testing.T) {
 		t.Errorf("missing repo err = %v", err)
 	}
 	f.check()
+}
+
+// roundTripFunc is an http.RoundTripper made of a function.
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+// The app tells a failed read by its status: a 502 that stays through the
+// retries fails fast (the detail pass stops asking the forge), a 404 does
+// not, and both say their status.
+func TestStatusErrorsSayTheirStatus(t *testing.T) {
+	f, c := newFake(t)
+	f.routes["/api/v1/repos/acme/down"] = func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusBadGateway) }
+	_, err := c.Repo(context.Background(), "acme/down")
+	if !forge.FailedFast(err) || forge.Status(err) != http.StatusBadGateway {
+		t.Errorf("502: %v, failed fast %v, status %d", err, forge.FailedFast(err), forge.Status(err))
+	}
+	_, err = c.Repo(context.Background(), "acme/gone")
+	if forge.FailedFast(err) || forge.Status(err) != http.StatusNotFound {
+		t.Errorf("404: %v, failed fast %v, status %d", err, forge.FailedFast(err), forge.Status(err))
+	}
+}
+
+// A read that fails fast in a way that often passes (a 503 here) is tried
+// again; a 4xx, a 500 and a timeout are not.
+func TestRetriesQuickFailuresOnly(t *testing.T) {
+	f, c := newFake(t)
+	answers := map[string][]int{
+		"blip": {http.StatusServiceUnavailable, http.StatusOK}, "gone": {http.StatusNotFound},
+		"auth": {http.StatusUnauthorized}, "scope": {http.StatusForbidden}, "busy": {http.StatusTooManyRequests},
+		"boom": {http.StatusInternalServerError},
+	}
+	for name, codes := range answers {
+		tries := 0
+		f.routes["/api/v1/repos/acme/"+name] = func(w http.ResponseWriter, r *http.Request) {
+			f.mu.Lock()
+			code := codes[min(tries, len(codes)-1)]
+			tries++
+			f.mu.Unlock()
+			if code != http.StatusOK {
+				w.WriteHeader(code)
+				return
+			}
+			_, _ = w.Write([]byte(`{"full_name":"acme/` + name + `","name":"` + name + `"}`))
+		}
+	}
+	ctx := context.Background()
+	if r, err := c.Repo(ctx, "acme/blip"); err != nil || r.FullName != "acme/blip" {
+		t.Errorf("503 once, then 200: %+v %v", r, err)
+	}
+	for _, name := range []string{"gone", "auth", "scope", "busy", "boom"} {
+		if _, err := c.Repo(ctx, "acme/"+name); err == nil {
+			t.Errorf("%s: no error", name)
+		}
+	}
+	sent := map[string]int{}
+	f.mu.Lock()
+	for _, s := range f.seen {
+		sent[strings.TrimPrefix(s, "/api/v1/repos/acme/")]++
+	}
+	f.mu.Unlock()
+	for name, n := range map[string]int{"blip": 2, "gone": 1, "auth": 1, "scope": 1, "busy": 1, "boom": 1} {
+		if sent[name] != n {
+			t.Errorf("%s: %d requests, want %d", name, sent[name], n)
+		}
+	}
+	// A timeout is not tried again: on a hung forge each try would cost the
+	// whole client timeout.
+	tries := 0
+	c.HTTP = &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		tries++
+		return nil, &net.OpError{Op: "read", Net: "tcp", Err: os.ErrDeadlineExceeded}
+	})}
+	if _, err := c.Repo(ctx, "acme/blip"); err == nil || tries != 1 {
+		t.Errorf("timeout: %d tries, err %v; want 1 try", tries, err)
+	}
+}
+
+// Each owner is listed on its own, as on GitHub: the token user from
+// /user/repos (private repos kept, collaborations and orgs left out), an org
+// from /orgs/{org}/repos, and a user who is not an org from
+// /users/{user}/repos once /orgs/ says 404. Nothing of an org that is not
+// listed is asked for or kept.
+func TestListReposPerOwner(t *testing.T) {
+	f, c := newFake(t)
+	f.routes["/api/v1/user"] = func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte(`{"login":"mark"}`)) }
+	list := func(total, body string) func(http.ResponseWriter, *http.Request) {
+		return func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("X-Total-Count", total)
+			_, _ = w.Write([]byte(body))
+		}
+	}
+	f.routes["/api/v1/user/repos"] = list("3", `[{"full_name":"mark/tool","name":"tool","owner":{"login":"mark"}},`+
+		`{"full_name":"mark/notes","name":"notes","owner":{"login":"mark"},"private":true},`+
+		`{"full_name":"other-org/secret","name":"secret","owner":{"login":"other-org"},"private":true}]`)
+	f.routes["/api/v1/orgs/acme-org/repos"] = list("1", `[{"full_name":"acme-org/app","name":"app","owner":{"login":"acme-org"}}]`)
+	f.routes["/api/v1/users/friend/repos"] = list("1", `[{"full_name":"friend/lib","name":"lib","owner":{"login":"friend"}}]`)
+	repos, err := c.ListRepos(context.Background(), []string{"Mark", "acme-org", "friend"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	for _, r := range repos {
+		names = append(names, r.FullName)
+		if r.Forge != "gitea" {
+			t.Errorf("%s: forge %q", r.FullName, r.Forge)
+		}
+	}
+	if got := strings.Join(names, " "); got != "mark/tool mark/notes acme-org/app friend/lib" {
+		t.Errorf("repos = %s", got)
+	}
+	var paths []string
+	for _, s := range f.seen {
+		p, _, _ := strings.Cut(s, "?")
+		paths = append(paths, strings.TrimPrefix(p, "/api/v1"))
+	}
+	if got := strings.Join(paths, " "); got != "/user /user/repos /orgs/acme-org/repos /orgs/friend/repos /users/friend/repos" {
+		t.Errorf("requests = %s", got)
+	}
+	f.check()
+}
+
+// Paging goes on to X-Total-Count, or to an empty page when there is none,
+// whatever a page's length: a server whose page size is below 50 answers 30
+// at a time. A server that ignores the page number is read once more, not
+// 40 times, and is not reported as cut.
+func TestListReposPagesToTheTotal(t *testing.T) {
+	page := func(n int) string { // acme/r<i> on page n, 30 a page, 75 in all
+		var items []string
+		for i := (n - 1) * 30; i < min(n*30, 75); i++ {
+			items = append(items, fmt.Sprintf(`{"full_name":"acme/r%02d","name":"r%02d","owner":{"login":"acme"}}`, i, i))
+		}
+		return "[" + strings.Join(items, ",") + "]"
+	}
+	for _, tc := range []struct {
+		name            string
+		total, ignores  bool // X-Total-Count sent; every request gets page 1
+		repos, requests int
+	}{
+		{"short pages, total sent", true, false, 75, 3},
+		{"short pages, no total", false, false, 75, 4}, // the empty fourth page ends it
+		{"page number ignored", false, true, 30, 2},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f, c := newFake(t)
+			f.routes["/api/v1/user/repos"] = func(w http.ResponseWriter, r *http.Request) {
+				n, _ := strconv.Atoi(r.URL.Query().Get("page"))
+				if tc.ignores {
+					n = 1
+				}
+				if tc.total {
+					w.Header().Set("X-Total-Count", "75")
+				}
+				_, _ = w.Write([]byte(page(n)))
+			}
+			repos, err := c.ListRepos(context.Background(), []string{"acme"})
+			lists := 0
+			for _, s := range f.seen {
+				if strings.HasPrefix(s, "/api/v1/user/repos") {
+					lists++
+				}
+			}
+			if err != nil || len(repos) != tc.repos || lists != tc.requests {
+				t.Errorf("%d repos in %d requests (err %v), want %d in %d", len(repos), lists, err, tc.repos, tc.requests)
+			}
+		})
+	}
+}
+
+// A list longer than ListPages pages stops there; the repos read come back
+// with a *forge.ListCapped naming the owner and how many were read.
+func TestListReposCapped(t *testing.T) {
+	f, c := newFake(t)
+	f.routes["/api/v1/orgs/big/repos"] = func(w http.ResponseWriter, r *http.Request) {
+		n, _ := strconv.Atoi(r.URL.Query().Get("page"))
+		w.Header().Set("X-Total-Count", "5000")
+		var items []string
+		for i := (n - 1) * 50; i < n*50; i++ {
+			items = append(items, fmt.Sprintf(`{"full_name":"big/r%04d","name":"r%04d","owner":{"login":"big"}}`, i, i))
+		}
+		_, _ = w.Write([]byte("[" + strings.Join(items, ",") + "]"))
+	}
+	repos, err := c.ListRepos(context.Background(), []string{"big"})
+	var capped *forge.ListCapped
+	if !errors.As(err, &capped) || len(capped.Cut) != 1 || capped.Cut[0] != (forge.CutList{Owner: "big", Read: 2000}) {
+		t.Fatalf("err = %v, want the list of big cut at 2000", err)
+	}
+	if len(repos) != 2000 || err.Error() != "only the first 2000 repos of big are listed" {
+		t.Errorf("%d repos, %q", len(repos), err)
+	}
+}
+
+// ownerList answers one owner's repo list.
+func ownerList(owner, name string) func(http.ResponseWriter, *http.Request) {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Total-Count", "1")
+		_, _ = w.Write([]byte(`[{"full_name":"` + owner + "/" + name + `","name":"` + name + `","owner":{"login":"` + owner + `"}}]`))
+	}
+}
+
+func notFound(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotFound)
+	_, _ = w.Write([]byte(`{"message":"not found"}`))
+}
+
+// listRoutes are the owner list routes ("orgs" or "users") asked since from.
+func (f *fakeGitea) listRoutes(from int) (string, int) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []string
+	for _, s := range f.seen[from:] {
+		for _, pre := range []string{"orgs", "users"} {
+			if strings.HasPrefix(s, "/api/v1/"+pre+"/") {
+				out = append(out, pre)
+			}
+		}
+	}
+	return strings.Join(out, " "), len(f.seen)
+}
+
+// A token without the read:organization scope gets 403 from
+// /orgs/{org}/repos. The org is then read from /users/{org}/repos, which
+// Gitea serves for an org too, and no other owner's repos are lost.
+func TestListReposOrgsForbiddenReadsUsers(t *testing.T) {
+	f, c := newFake(t)
+	f.routes["/api/v1/user"] = func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte(`{"login":"mark"}`)) }
+	f.routes["/api/v1/user/repos"] = ownerList("mark", "tool")
+	f.routes["/api/v1/orgs/acme-org/repos"] = func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte(`{"message":"token does not have at least one of required scope(s): [read:organization]"}`))
+	}
+	f.routes["/api/v1/users/acme-org/repos"] = ownerList("acme-org", "app")
+	repos, err := c.ListRepos(context.Background(), []string{"mark", "acme-org"})
+	var names []string
+	for _, r := range repos {
+		names = append(names, r.FullName)
+	}
+	if got := strings.Join(names, " "); err != nil || got != "mark/tool acme-org/app" {
+		t.Errorf("repos = %s, err %v; want mark/tool acme-org/app", got, err)
+	}
+}
+
+// The route that answered an owner is asked first at the next list, so a
+// user other than the token user costs one request a list, not a 404 from
+// /orgs/ first. A route that answers 404 is forgotten.
+func TestListReposRemembersTheRoute(t *testing.T) {
+	f, c := newFake(t)
+	var state atomic.Int32 // 0: friend is a user, 1: gone, 2: an org
+	f.routes["/api/v1/orgs/friend/repos"] = func(w http.ResponseWriter, r *http.Request) {
+		if state.Load() != 2 {
+			notFound(w, r)
+			return
+		}
+		ownerList("friend", "app")(w, r)
+	}
+	f.routes["/api/v1/users/friend/repos"] = func(w http.ResponseWriter, r *http.Request) {
+		if state.Load() != 0 {
+			notFound(w, r)
+			return
+		}
+		ownerList("friend", "lib")(w, r)
+	}
+	ctx := context.Background()
+	from := 0
+	for i, want := range []struct {
+		state        int32
+		routes, repo string
+	}{
+		{0, "orgs users", "friend/lib"},
+		{0, "users", "friend/lib"},
+		{1, "users orgs", ""},
+		{2, "orgs", "friend/app"},
+		{2, "orgs", "friend/app"},
+	} {
+		state.Store(want.state)
+		repos, err := c.ListRepos(ctx, []string{"friend"})
+		var routes string
+		routes, from = f.listRoutes(from)
+		got := ""
+		if len(repos) == 1 {
+			got = repos[0].FullName
+		}
+		if err != nil || routes != want.routes || got != want.repo || len(repos) > 1 {
+			t.Errorf("list %d: asked %q for %v (err %v), want %q for %q", i+1, routes, repos, err, want.routes, want.repo)
+		}
+	}
 }

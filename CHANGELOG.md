@@ -7,6 +7,317 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-17
+
+### Added
+
+- **Set up in the browser.** A fresh install with no config file, no forge
+  variable and an empty data volume no longer stops at start: for its first
+  5 minutes it serves a setup page (the log says until when, and a restart
+  opens it again); a data folder it cannot write stops the start instead,
+  and the log says why. Make the one account, connect Gitea, Forgejo or
+  GitHub with a token (tested before it is saved) and choose the page's
+  settings. **Settings** then changes every
+  setting a config file holds, bar `listen` and `data_dir`, without a
+  restart. With **Only me, after signing in** (the default; in Settings,
+  **Ask for sign-in to see the page**) the pages, the JSON API and the feed
+  need the account; a feed key opens the feed, the JSON API
+  and `POST /api/refresh` for feed readers and webhooks. Installs with a
+  config file or the quick-start variables work as before, with no
+  sign-in.
+- **Sign-in**, on an install set up in the browser: one account, a
+  password of 12 characters or more, and **Keep me signed in** for 30 days
+  (otherwise until the browser closes, or 12 hours at most). Wrong guesses
+  are slowed down, and other people's wrong guesses never keep out a
+  browser that has signed in before. `-reset-password` makes every browser
+  new again, so it also prints a one-time link that lets one sign-in skip a
+  wait that others' guesses keep up. Signing out ends every session (and
+  says so when it could not), and a password change signs out every other
+  device and keeps this one's Keep me signed in. An open page
+  whose session has ended goes to the sign-in page; on other installs an
+  open page behaves as before.
+- **Settings** saves a change and applies it at once, without a restart:
+  an unchanged save reads nothing again, and settings that cannot start put
+  the previous ones back. Turning sign-in off turns private repos off, and
+  no visitor sees a private repo in between.
+- **A feed key** (`fm_` and 32 characters) opens `/feed.atom`, the JSON API
+  and `POST /api/refresh` while sign-in is on, as `?key=`, a Bearer token
+  or a Basic password, so feed readers and push webhooks keep working.
+  **Make a new key** shows the new key once and stops the old one at once.
+- **Connecting a forge** tests its token first and saves it only if the
+  forge answers, then lists the owners the token can read to tick. On an
+  install set up in the browser every forge request ignores `HTTP_PROXY`
+  and `HTTPS_PROXY`, follows no redirect and refuses link-local addresses
+  and the two cloud metadata addresses outside them (`fd00:ec2::254` and
+  `100.100.100.200`), and a saved token is only ever sent to the address it
+  was saved with.
+- **A forge with a self-signed certificate** (or one made for another
+  name, or out of date) can be trusted from the page on an install set up
+  in the browser: **Connect** shows the certificate and its fingerprint,
+  and a tick trusts exactly that certificate for that forge, never any
+  other. The forge's page shows the trusted fingerprint and **Stop
+  trusting**, and when the forge's certificate changes the overview says
+  so and the forge's page offers the new one. Replacing the token of a
+  forge that has moved to a certificate the normal check accepts also
+  stops trusting the old one. GitHub is always checked the normal way, and
+  installs with a config file keep `SSL_CERT_FILE`.
+- `forgemap -reset-password` sets a new random password for the account
+  of an install set up in the browser, signs every browser out and prints
+  the password once, with a one-time sign-in link that skips the wait for
+  too many tries (it works for 15 minutes), for example
+  `docker exec forgemap forgemap -reset-password`. The running server takes
+  it at the next sign-in. It keeps the feed key and the settings, and says
+  so. Run as another user than the one `settings.json`
+  belongs to, on a disk that keeps each file's owner, it refuses and
+  changes nothing, so the server can always read its settings.
+- CI cross-builds the binary for Linux arm64 and armv7 and for macOS arm64
+  on each push to main and each pull request to main, and builds the image
+  for amd64 and arm64, so a break on a release platform shows before a
+  release does.
+- A weekly workflow scans the latest release's binary with govulncheck. Any
+  finding fails it: a Go security fix since the release means a rebuild is
+  due.
+- The install guide in the wiki has a Docker Compose example and a Caddy
+  example of a login in front, and the README's privacy note links both.
+- An API page in the wiki: each read-only endpoint and its top-level keys,
+  the `/healthz` answer for uptime monitors, what a refresh from a push
+  webhook costs, and a dashboard example.
+- When a forge lists no repo the page can show, its source row says why.
+  On an install with a config file or the quick-start variables it says
+  "No repos owned by <user>: add your orgs to owners" (no `owners`, and the
+  token sees only other people's repos), "Private repos are hidden
+  (include_private is off)" or "Forks are left out (forks is off)"; on an
+  install set up in the browser it names the setting to change in Settings
+  instead. The page never names or counts the private repos; the log has
+  the count. A site with no projects says **Nothing to show yet** on the
+  board, with each forge's note or error and where to choose what is
+  tracked (Settings on an install set up in the browser, the Installation
+  guide otherwise), kept current while the page is open.
+- `refresh: false` (or `FORGEMAP_REFRESH=false`) turns refreshes off: the
+  palette has no **Refresh now**, and `POST /api/refresh` answers 404.
+- `/feed.atom`: an Atom feed of the newest 100 changes the overview shows,
+  each titled in the page's words and linked to its project's page, so a
+  feed reader or a dashboard can follow the site without it open. Every
+  page names it in its head. `?kind=release,ci` keeps some kinds and
+  `?project=<slug>` one project; an unknown kind or project gives an empty
+  feed. It shows nothing the page does not.
+- The Ideas page's filters live in the link: kind, size, project and a
+  new **Issue** filter (Filed or Not filed) show in the address, so a
+  filtered view can be bookmarked or shared, and the page opens with them
+  set. Filed counts every idea that has an issue, ideas from labelled
+  issues included, so Filed and Not filed together are all the ideas. The
+  kind, size and issue filters work without JavaScript too; the project
+  choice needs it. The row of counts above the filters is gone; the filter
+  chips carry the counts.
+
+### Changed
+
+- Waymark is now ForgeMap. If you run 0.2.x, change these:
+  - Images: `ghcr.io/will-luck/forgemap` and `willluck/forgemap` (were
+    `ghcr.io/will-luck/waymark` and `willluck/waymark`, which keep 0.2.x).
+  - The binary is `forgemap` and the release files `forgemap-<os>-<arch>`
+    (were `waymark` and `waymark-<os>-<arch>`).
+  - The config file is `/config/forgemap.yml` (was `/config/waymark.yml`):
+    rename it, or point `FORGEMAP_CONFIG` at it. While ForgeMap finds only
+    the old file, it does not start, and says why.
+  - Environment variables start with `FORGEMAP_` (was `WAYMARK_`):
+    `FORGEMAP_CONFIG`, `FORGEMAP_LISTEN`, `FORGEMAP_TITLE` and
+    `FORGEMAP_INCLUDE_PRIVATE`, plus the new `FORGEMAP_REFRESH` and
+    `FORGEMAP_FORKS`. A `WAYMARK_` variable is no longer read: the log
+    warns of each one still set, and `WAYMARK_CONFIG` with no other config
+    stops the start.
+  - The ideas marker is `forgemap-idea:` by default (was `waymark-idea:`).
+    If you filed ideas as issues with 0.2.x, set
+    `ideas.marker: "waymark-idea:"` to keep them linked.
+  - Requests name the app `ForgeMap/<version>`, and probes
+    `ForgeMap-probe/<version>` (were `waymark/<version>` and
+    `waymark-probe/<version>`), for a proxy or a firewall that allows or
+    counts by User-Agent.
+  - The page title is ForgeMap unless `site.title` (or `FORGEMAP_TITLE`)
+    sets your own.
+  - Your data volume keeps working under its old name: mount it at `/data`
+    as before (the examples now call it `forgemap-data`).
+  - `scripts/docker-feed.sh` writes to `/var/lib/forgemap-feed` unless
+    `FEED_DIR` names another folder (a cron line that sets it, as the docs
+    show, keeps working).
+  - The repo is github.com/Will-Luck/forgemap; GitHub sends the old address
+    there.
+  - Forks are left out by default (more below). To keep the forks 0.2.x
+    showed, set `forges[].forks: true`, or `FORGEMAP_FORKS=true` in the
+    environment-only quick start.
+- Two failed probe checks count as "in a row" only when they are at most
+  5 minutes apart. A failed check and the next one more than 5 minutes
+  later (a long restart, a sleeping host) no longer confirm an outage
+  together: the second shows as "Failed once, checking again" until the
+  next check. An outage that had already counted stays counted across a
+  restart, on a projects-file url and on a homepage alike.
+- A release is published only from a commit that passes the tests and the
+  demo smoke test, which the release workflow now runs first. Every GitHub
+  Action in the workflows is pinned to a full commit SHA, with Dependabot
+  proposing the bumps, and govulncheck to a version. The image is pushed
+  with a Docker Hub token of its own (the `DOCKERHUB_PUSH_TOKEN` secret,
+  Read & Write), and the Docker Hub README is synced by a job of its own:
+  the only third-party action given a Docker Hub token (`DOCKERHUB_TOKEN`,
+  which the push no longer uses).
+- The demo smoke test runs the image read-only, with no Linux capabilities
+  and no new privileges, so a write anywhere but `/data` and `/tmp` (where
+  the demo keeps its files) fails CI. The install guide's commands use the
+  same flags.
+- Unchanged repos are read again on minutes of their own in the last
+  quarter of the 30 minute (detail) and 6 hour (files) spans, instead of
+  all on one tick, so a forge is never asked for every repo at once; no data
+  is older than before. With a GitHub token, the commit window's URL holds
+  for a day, so an unchanged page is a free 304, and the tag list is asked
+  for again only after a push or a release that names a new tag.
+- With a GitHub token, a repo whose only news is a run in progress has only
+  its runs read each minute, not its whole detail; when the run ends, the
+  whole detail is read at once.
+- Forks are left out by default: a repo that is a fork becomes a project
+  only when the projects file names it, or with `forges[].forks: true`
+  (`FORGEMAP_FORKS=true` in the environment-only quick start). Forks made to
+  send one change no longer fill the page with Dormant cards. This was a
+  known limitation of 0.2.0.
+- A forge whose repo list fails says what to fix: "Gitea refused the token:
+  check GITEA_TOKEN" (or `forges[N].token` with a config file; GitHub too),
+  "The token lacks a scope: ..." with Gitea's own words, "Nothing at this
+  address: check the URL" or "Cannot reach <host>". The log keeps the error
+  with its HTTP status.
+- **Refresh now** is cheap: a refresh lists every forge and reads the
+  projects and ideas files again, but reads a repo's detail only where its
+  list moved or its last read failed, on Gitea and Forgejo too (0.2.0 read
+  every Gitea primary again). Mirrors read in the last 5 minutes, and the
+  heatmap, the filed-idea search, F-Droid and the probes read in the last 2
+  minutes, wait for their own turn. One refresh a minute at most (was 20
+  seconds). The answer says what happened (`"queued": true`, or
+  `"queued": false` with `last_at` and `next_at`, beside `"ok": true` as
+  before), and the palette says
+  "Refresh queued." or "Refreshed at 14:02. The next refresh can start in
+  15 s."
+- `-fixture` serves an edit of its file within a second and sends it to
+  open pages as a live update, so the live page can be tried against a
+  site that changes.
+- On a phone the map page leads with the **By category** list and keeps
+  the map behind **Show map**. Map labels never draw smaller than 13 px on
+  screen, at any width.
+- The overview says what its two charts count. The week strip has a
+  caption with its total, such as "Commits per week, last 12 months:
+  967", and each card's last commit line counts its sparkline, such as
+  "103 commits in 12 weeks, last 16 hours ago".
+- A project on hold is badged **On hold** everywhere (its badge said Parked
+  or Frozen, but the map legend said On hold); its page still says whether
+  it is parked or frozen, and the badge's icon shows which. A hold with no
+  commits since it began no longer adds a Parked or Frozen chip beside the
+  badge.
+- Every answer's Content Security Policy also says `form-action 'self'`:
+  a form on a ForgeMap page can be sent only to ForgeMap itself. This
+  applies to every install, including one set up from a config file.
+- A start with no config file and no forge variable, on a data volume
+  already in use (a config mount gone missing, say), still stops, and now
+  says how to set up in the browser instead. A `settings.json` that cannot
+  be read stops the start too; it is never moved aside.
+- The "listening on" line is logged once the port is bound, on every
+  install. Apart from the name (`ForgeMap`, was `waymark`) its words are
+  unchanged; a port already in use now shows only the error, with no
+  "listening on" line before it.
+- `state.json` is written readable by its owner only (mode 0600), like
+  `settings.json`, on every install whose disk lets it set the mode; on one
+  that does not (a FAT or CIFS mount, say) it is saved as before, and the
+  log says so once.
+
+### Fixed
+
+- A link to a place on a page (a forge's **Replace token**, a refused box)
+  lands below the sticky header, also where the header takes two rows.
+- A date given without a time reads the day it names in every time zone:
+  a hold's `since`, a note's `updated:` date, a plan's date (from its file
+  name), and "Notes updated N days ago" for a project whose newest note has
+  a date only. West of UTC (all of
+  the Americas) they showed the day before, or counted a day too many.
+- The activity feed names a container in a restart loop, or paused, as
+  its card does: "Container X is restarting" or "is paused", not
+  "stopped". "Since you last looked" folds these rows as before.
+- A project no longer shows the same link twice. A projects-file url that
+  repeats a link the project already has (often its GitHub mirror) is left
+  out, and the log names it once so the projects file can be tidied.
+  Probes are unchanged.
+- In the first 10 minutes after a start, while a forge has not listed its
+  repos yet, a container whose outage had already counted no longer
+  rewrites `state.json` at every Docker feed (a crash loop wrote it about
+  20 times in those minutes for nothing).
+- The notes of a GitHub release are now the tag's own notes. The release
+  workflow wrote the commit message instead (0.2.1 and 0.2.2), because the
+  checkout left the tag without its annotation.
+- A one-off HTTP 502, 503 or 504, or a refused or dropped connection, no
+  longer turns a forge red: Gitea, Forgejo and GitHub reads are tried twice
+  more, after about 1 and 3 seconds. A timeout, a 4xx or a rate limit is not
+  tried again.
+- A forge that stops answering, or still answers 502, 503 or 504 or
+  refuses the connection after those tries, costs one failed read per pass
+  (at most four, one per read under way at once), not one per repo: its
+  other repos wait for the next pass with their last good data, and its
+  status says "Gitea not answering; 12 repos not read this pass". A repo
+  whose last read failed is read after the others, so one failing repo does
+  not hold them up, and while the forge answers its other repos the status
+  names that repo rather than saying the forge is not answering. A mirror
+  whose read failed for a passing reason (a timeout, a dropped connection
+  or a 5xx answer, not a 4xx) is read again after 1, 2, 4 and up to 30
+  minutes, not only at the next 30 minute pass.
+- Without a GitHub token, mirrors spend less of the 60 reads an hour: a
+  repo with no open issues or pull requests is read in two calls, not
+  three; after a rate limit only the mirrors it stopped are read again; and
+  when an answer says no reads are left, ForgeMap stops asking until the
+  reset instead of making the call that would be refused.
+- F-Droid: an app on the main f-droid.org repo works. The index (about
+  75 MB) is streamed and only the packages the projects file names are
+  kept (a package named later is read as soon as the projects file is read
+  again); a read fails once the index is over 256 MiB; each read has its
+  own 2 minute deadline,
+  though a server that has not begun to answer after 20 seconds fails as
+  before; and an unchanged index (a 304 answer) is not downloaded again.
+- Gitea and Forgejo track any user or org in `owners`, as GitHub does: each
+  owner is read from its own list, not filtered out of what the token user
+  can see. An org is read from its own list when the token has the
+  `read:organization` scope, and from the same list as a user when it does
+  not; each owner's list is asked first where it answered last time. Lists
+  page on to the server's total, so a server with a smaller page size is no
+  longer cut to its first page; a list cut at 40 pages is named in the
+  forge's status; and an owner with no repos is logged as having "no repos
+  the token can see, or no such owner".
+- A forge whose repo list has never worked no longer adds "(showing the last
+  good data)": there is none yet.
+- One slow or hanging forge no longer holds the others up: each forge is
+  listed and read on its own minute, starting a few seconds apart, so a
+  forge that answers keeps its data fresh while another times out. This was
+  a known limitation of 0.2.0. Local projects and ideas files are read on a
+  minute of their own; files in a forge repo with that forge's reads.
+- A 404 for a very long address answers at once. The "did you mean" list
+  is not worked out for an address over 64 characters, and the page shows
+  at most 64 characters of it; a 1 MB address took about 3 seconds of CPU.
+  Request headers are capped at 16 KiB, with Go's 4 KiB of slack (a
+  larger request gets 431).
+- Live updates have limits on a public page. At most 256 live streams are
+  open at once; one more is refused, and the page tries again on its own
+  after about 5 seconds, waiting twice as long each time, up to a minute.
+  A write that waits 30 seconds ends its stream,
+  every stream ends after 30 minutes and the browser opens a new one within
+  a second (the header does not say "Reconnecting" for it), and an idle
+  connection is closed after 2 minutes.
+- The overview keeps up while it is open. The tiles, the week strip and
+  Needs you update with each change, a card whose state changes moves to
+  that state's group with every count updated, and a project added or
+  removed appears or goes, all without a reload. It said "Live" while only
+  the cards changed.
+- The 24 hour uptime bar no longer hides a short outage. A ten-minute
+  cell with any failed check shows as down, and its tip counts them, such
+  as "1 of 5 checks down". Down cells are full height and striped and up
+  cells shorter, so the state shows by shape, not by colour alone. A line
+  under the bar says "No failed checks in 24 hours" or counts them and
+  names the last one, such as "Failed checks: 3 in 24 hours, last at 03:50".
+- In a contrast theme (forced colours, such as Windows Contrast Themes)
+  the heatmap, the uptime bar and ring and the status dot no longer
+  vanish: they draw in the theme's own colours, with heat levels shown by
+  outline weight and failed checks by stripes.
+
 ## [0.2.2] - 2026-11-13
 
 ### Changed

@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Will-Luck/waymark/internal/model"
+	"github.com/Will-Luck/forgemap/internal/model"
 )
 
 func fpBase() Fingerprint {
@@ -163,5 +163,39 @@ func TestMergeKeepsKnownValues(t *testing.T) {
 	var back Fingerprint
 	if err := json.Unmarshal(b, &back); err != nil || len(back.CI) != 20 {
 		t.Errorf("round trip: %v %d", err, len(back.CI))
+	}
+}
+
+// A container that goes from running to restarting or paused is named by
+// the state its card shows ("is restarting", "is paused"), not "stopped";
+// exited and dead still read "stopped", and missing "is missing". The ID
+// keeps the state. Exited to restarting (an outage that already counted)
+// and paused to exited write no event, as before (A6).
+func TestDiffContainerStateWords(t *testing.T) {
+	cases := []struct {
+		from, to string
+		id, text string // "" when no event is wanted
+	}{
+		{"running", "restarting", "beacon:container:restarting:202610312200", "Container beacon is restarting"},
+		{"running", "paused", "beacon:container:paused:202610312200", "Container beacon is paused"},
+		{"running", "exited", "beacon:container:exited:202610312200", "Container beacon stopped"},
+		{"running", "dead", "beacon:container:dead:202610312200", "Container beacon stopped"},
+		{"running", "missing", "beacon:container:missing:202610312200", "Container beacon is missing"},
+		{"exited", "restarting", "", ""},
+		{"paused", "exited", "", ""},
+	}
+	for _, tc := range cases {
+		prev, cur := fpBase(), fpBase()
+		prev.ContainerState, cur.ContainerState = ptr(tc.from), ptr(tc.to)
+		evs := ofKind(Diff(map[string]Fingerprint{"beacon": prev}, map[string]Fingerprint{"beacon": cur}, testNow), "container")
+		if tc.text == "" {
+			if len(evs) != 0 {
+				t.Errorf("%s -> %s: events %+v, want none", tc.from, tc.to, evs)
+			}
+			continue
+		}
+		if len(evs) != 1 || evs[0].ID != tc.id || evs[0].Text != tc.text || evs[0].Level != model.LevelAlert {
+			t.Errorf("%s -> %s: events %+v, want one %q %q", tc.from, tc.to, evs, tc.id, tc.text)
+		}
 	}
 }

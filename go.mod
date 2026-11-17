@@ -1,4 +1,4 @@
-module github.com/Will-Luck/waymark
+module github.com/Will-Luck/forgemap
 
 go 1.24
 

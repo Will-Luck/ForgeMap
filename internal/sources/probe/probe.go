@@ -41,7 +41,7 @@ func IsUp(code int) bool {
 	return (code >= 200 && code < 400) || code == http.StatusUnauthorized || code == http.StatusForbidden
 }
 
-// Check GETs u once, as waymark-probe/<version>.
+// Check GETs u once, as ForgeMap-probe/<version>.
 func Check(ctx context.Context, c *http.Client, u, version string) Result {
 	r := Result{URL: u, At: time.Now().UTC()}
 	ctx, cancel := context.WithTimeout(ctx, Timeout)
@@ -51,7 +51,7 @@ func Check(ctx context.Context, c *http.Client, u, version string) Result {
 		r.Err = err.Error()
 		return r
 	}
-	req.Header.Set("User-Agent", "waymark-probe/"+version)
+	req.Header.Set("User-Agent", "ForgeMap-probe/"+version)
 	start := time.Now()
 	resp, err := c.Do(req)
 	r.LatencyMS = int(time.Since(start).Milliseconds())

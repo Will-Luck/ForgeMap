@@ -9,9 +9,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Will-Luck/waymark/internal/forge"
-	"github.com/Will-Luck/waymark/internal/model"
-	"github.com/Will-Luck/waymark/internal/registry"
+	"github.com/Will-Luck/forgemap/internal/forge"
+	"github.com/Will-Luck/forgemap/internal/model"
+	"github.com/Will-Luck/forgemap/internal/registry"
 )
 
 // Thresholds from the spec, plus the hold-contradiction floor.
@@ -242,12 +242,30 @@ func ShortDate(t, now time.Time, loc *time.Location) string {
 	return lt.Format("2 Jan")
 }
 
+// ShortDay is ShortDate for a date-only stamp: a hold's since, or a note's
+// "updated: 2026-10-03". Parsed as midnight UTC, it names a calendar date,
+// and it reads that date in every zone (ShortDate shows the day before west
+// of UTC).
+func ShortDay(date, now time.Time, loc *time.Location) string {
+	if loc == nil {
+		loc = time.UTC
+	}
+	return ShortDate(dayIn(date, loc), now, loc)
+}
+
 // endOfDay is the end, in loc, of the calendar date a date-only stamp names
 // (it was parsed as midnight UTC of that date): "after 3 Oct" means from
 // midnight in the configured time zone at the end of 3 Oct.
 func endOfDay(date time.Time, loc *time.Location) time.Time {
 	y, m, d := date.UTC().Date()
 	return time.Date(y, m, d+1, 0, 0, 0, 0, loc)
+}
+
+// dayIn is midnight in loc of the calendar date a date-only stamp names (it
+// was parsed as midnight UTC of that date).
+func dayIn(date time.Time, loc *time.Location) time.Time {
+	y, m, d := date.UTC().Date()
+	return time.Date(y, m, d, 0, 0, 0, 0, loc)
 }
 
 // WeekStart is Monday 00:00 of t's week in loc.
@@ -358,7 +376,7 @@ func Tier(in TierInput, now time.Time) (model.Tier, string) {
 	case in.RepoArchived:
 		return model.TierArchived, "Archived on " + in.Forge
 	case in.Hold != nil:
-		r := holdWord(in.Hold.Kind) + " since " + ShortDate(in.Hold.Since, now, loc)
+		r := model.HoldWord(in.Hold.Kind) + " since " + ShortDay(in.Hold.Since, now, loc)
 		if in.Hold.Reason != "" {
 			r += ": " + in.Hold.Reason
 		}
@@ -394,13 +412,6 @@ func Tier(in TierInput, now time.Time) (model.Tier, string) {
 		return model.TierDormant, "No " + what + " for " + For(in.LastCommit, now)
 	}
 	return model.TierDormant, none
-}
-
-func holdWord(kind string) string {
-	if kind == "frozen" {
-		return "Frozen"
-	}
-	return "Parked"
 }
 
 // repoWindow is one repo's fetched commits, newest first. start is where the

@@ -11,9 +11,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Will-Luck/waymark/internal/config"
-	"github.com/Will-Luck/waymark/internal/forge"
-	"github.com/Will-Luck/waymark/internal/model"
+	"github.com/Will-Luck/forgemap/internal/config"
+	"github.com/Will-Luck/forgemap/internal/forge"
+	"github.com/Will-Luck/forgemap/internal/model"
 )
 
 // writeIdeas writes an ideas file and returns its path.
@@ -137,7 +137,7 @@ func TestFiledFileIdeaNotDuplicated(t *testing.T) {
 	h := newAcmeHost(t)
 	idea := []string{"idea"}
 	g := h.forge("gitea", "gitea", "t1", []string{"acme"}, &acmeRepo{Owner: "acme", Name: "tool", Updated: fixedNow.Add(-day),
-		Filed: []string{"waymark-idea:tool-01"}, // issue #50
+		Filed: []string{"forgemap-idea:tool-01"}, // issue #50
 		Issues: []acmeIssue{
 			{N: 50, Title: "Sleep timer", Updated: fixedNow.Add(-time.Hour), Labels: idea},
 			{N: 8, Title: "Export", Updated: fixedNow.Add(-2 * time.Hour), Labels: idea},
@@ -201,7 +201,7 @@ func TestNoIdeasConfigured(t *testing.T) {
 func TestIdeaMarkerConfigurable(t *testing.T) {
 	h := newAcmeHost(t)
 	g := h.forge("gitea", "gitea", "t1", []string{"acme"}, &acmeRepo{Owner: "acme", Name: "tool", Updated: fixedNow.Add(-day),
-		Filed: []string{"acme-idea:tool-01", "waymark-idea:tool-02"}}) // issues #50, #51
+		Filed: []string{"acme-idea:tool-01", "forgemap-idea:tool-02"}}) // issues #50, #51
 	file := writeIdeas(t, `{"ideas":[{"id":"tool-01","project":"tool","title":"Sleep timer"},{"id":"tool-02","project":"tool","title":"Export"}]}`)
 	cfg := h.config(func(c *config.Config) { c.Ideas = config.Ideas{File: config.FileRef{File: file}, Marker: "acme-idea:"} }, g)
 	clients := NewForges(cfg)
@@ -239,7 +239,7 @@ func TestIncludePrivateFalseHidesIdeas(t *testing.T) {
 			&acmeRepo{Owner: "acme", Name: "secret", Private: true, Updated: fixedNow.Add(-day),
 				Issues: []acmeIssue{{N: 3, Title: "Rotate the keys", Updated: fixedNow.Add(-time.Hour), Labels: []string{"idea"}}}},
 			// Outside owners and not in the projects file: unknown to the app.
-			&acmeRepo{Owner: "other", Name: "vault", Private: true, Updated: fixedNow.Add(-day), Filed: []string{"waymark-idea:tool-01"}})
+			&acmeRepo{Owner: "other", Name: "vault", Private: true, Updated: fixedNow.Add(-day), Filed: []string{"forgemap-idea:tool-01"}})
 		file := writeIdeas(t, `{"ideas":[{"id":"tool-01","project":"tool","title":"Sleep timer"}]}`)
 		s := runOnce(t, h.app(func(c *config.Config) {
 			c.IncludePrivate = include

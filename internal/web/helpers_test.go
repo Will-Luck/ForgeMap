@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Will-Luck/waymark/internal/model"
+	"github.com/Will-Luck/forgemap/internal/model"
 )
 
 func TestAgoText(t *testing.T) {
@@ -37,11 +37,12 @@ func TestAgoText(t *testing.T) {
 func TestTierWords(t *testing.T) {
 	frozen := &model.Project{Tier: model.TierHold, Hold: &model.Hold{Kind: "frozen"}}
 	parked := &model.Project{Tier: model.TierHold, Hold: &model.Hold{Kind: "parked"}}
-	if tierLabel(frozen) != "Frozen" || tierIcon(frozen) != "snowflake" {
-		t.Error("frozen")
+	// One word for the hold state; the icon tells parked from frozen.
+	if tierLabel(frozen) != "On hold" || tierIcon(frozen) != "snowflake" {
+		t.Errorf("frozen: %q %q", tierLabel(frozen), tierIcon(frozen))
 	}
-	if tierLabel(parked) != "Parked" || tierIcon(parked) != "pause" {
-		t.Error("parked")
+	if tierLabel(parked) != "On hold" || tierIcon(parked) != "pause" {
+		t.Errorf("parked: %q %q", tierLabel(parked), tierIcon(parked))
 	}
 	if tierLabel(model.TierHold) != "On hold" || tierLabel(model.TierLive) != "Live" || tierIcon(model.TierLive) != "radio" {
 		t.Error("plain tiers")
@@ -58,6 +59,14 @@ func TestSparklineIsNumbersOnly(t *testing.T) {
 	}
 	if sparkline(nil) != "" {
 		t.Error("nil activity drew a sparkline")
+	}
+	// The card's form draws the same line with no name for a screen reader.
+	decor := string(sparkDecor([]int{0, 0, 3, 9, 0, 1, 0, 0, 48, 22, 75, 0}))
+	if want := strings.Replace(out, `role="img" aria-label="158 commits in 12 weeks"`, `aria-hidden="true" focusable="false"`, 1); decor != want || decor == out {
+		t.Errorf("decorative sparkline %s, want %s", decor, want)
+	}
+	if sparkDecor(nil) != "" {
+		t.Error("nil activity drew a decorative sparkline")
 	}
 }
 
@@ -83,6 +92,76 @@ func TestUptimeCells(t *testing.T) {
 	// The tips are in the site's time zone, not the server's or UTC.
 	if tip := uptimeCells(hist, time.FixedZone("", 3600))[143].Tip; !strings.HasPrefix(tip, "1 Nov 00:00, up") {
 		t.Errorf("tip in UTC+1: %q", tip)
+	}
+}
+
+// twoMinuteDay is a day of 2-minute probe checks ending at end, up except at
+// the times in down: five checks share each ten-minute cell of the bar.
+func twoMinuteDay(end time.Time, down ...time.Time) []model.ProbePoint {
+	isDown := map[time.Time]bool{}
+	for _, d := range down {
+		isDown[d] = true
+	}
+	var hist []model.ProbePoint
+	for at := end.Add(-24 * time.Hour); !at.After(end); at = at.Add(2 * time.Minute) {
+		hist = append(hist, model.ProbePoint{At: at, Up: !isDown[at], LatencyMS: 30})
+	}
+	return hist
+}
+
+// A cell's worst check wins: one failed check among five makes the cell
+// down, and its tip counts them. Spec: DESIGN.md C4.
+func TestUptimeCellWorstCheckWins(t *testing.T) {
+	end := time.Date(2026, 11, 12, 23, 0, 0, 0, time.UTC)
+	blip := time.Date(2026, 11, 12, 3, 50, 0, 0, time.UTC)
+	cells := uptimeCells(twoMinuteDay(end, blip), time.UTC)
+	var down []int
+	for i, c := range cells {
+		if c.Class == "down" {
+			down = append(down, i)
+		}
+	}
+	// 03:50 is 115 cells before 23:00, so cell 28 holds the checks at 03:46,
+	// 03:48, 03:50, 03:52 and 03:54; the two after the failure are up.
+	if len(down) != 1 || down[0] != 28 || cells[28].Tip != "12 Nov 03:50, 1 of 5 checks down" {
+		t.Errorf("down cells %v, cell 28 %+v", down, cells[28])
+	}
+	two := uptimeCells(twoMinuteDay(end, blip, blip.Add(2*time.Minute)), time.UTC)
+	if two[28].Class != "down" || two[28].Tip != "12 Nov 03:52, 2 of 5 checks down" {
+		t.Errorf("two failed checks: %+v", two[28])
+	}
+	if cells[143].Class != "up" || cells[143].Tip != "12 Nov 23:00, up, 30 ms" {
+		t.Errorf("newest cell %+v", cells[143])
+	}
+}
+
+// The line under the bar: how many checks failed in the cells the bar draws,
+// and when the last one was, in the site's time zone. Spec: DESIGN.md C4.
+func TestUptimeNote(t *testing.T) {
+	end := time.Date(2026, 11, 12, 23, 0, 0, 0, time.UTC)
+	blip := time.Date(2026, 11, 12, 3, 50, 0, 0, time.UTC)
+	for _, c := range []struct {
+		name string
+		hist []model.ProbePoint
+		loc  *time.Location
+		want string
+		down int
+	}{
+		{"clean day", twoMinuteDay(end), time.UTC, "No failed checks in 24 hours", 0},
+		{"one blip", twoMinuteDay(end, blip), time.UTC, "Failed checks: 1 in 24 hours, last at 03:50", 1},
+		{"three, the last named", twoMinuteDay(end, blip, blip.Add(2*time.Minute), end.Add(-time.Hour)), time.UTC,
+			"Failed checks: 3 in 24 hours, last at 22:00", 3},
+		{"site time zone", twoMinuteDay(end, blip), time.FixedZone("", 3600), "Failed checks: 1 in 24 hours, last at 04:50", 1},
+		// The oldest check, 24 hours back, is outside the bar's cells: not counted.
+		{"edge of the bar", twoMinuteDay(end, end.Add(-24*time.Hour)), time.UTC, "No failed checks in 24 hours", 0},
+	} {
+		n := uptimeSummary(c.hist, c.loc)
+		if n == nil || n.Lead+n.Rest != c.want || n.Down != c.down {
+			t.Errorf("%s: %+v, want %q (%d down)", c.name, n, c.want, c.down)
+		}
+	}
+	if n := uptimeSummary(nil, time.UTC); n != nil {
+		t.Errorf("no history: %+v, want no line", n)
 	}
 }
 

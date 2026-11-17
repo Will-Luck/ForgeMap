@@ -1,0 +1,34 @@
+{{define "bare"}}<!doctype html>
+<html lang="en-GB"{{with .Theme}} data-theme="{{.}}"{{end}}>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{.Title}}</title>
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#0f121a" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#f8f6ee" media="(prefers-color-scheme: light)">
+<link rel="stylesheet" href="{{.Static}}/css/app.css">
+<link rel="icon" href="{{.Static}}/favicon.svg" type="image/svg+xml">
+<script type="module" src="{{.Static}}/js/forms.js"></script>
+</head>
+<body class="bare">
+{{.Sprite}}
+<a class="skip" href="#main">Skip to content</a>
+<header class="site-head">
+  <div class="head-inner">
+    <a class="brand" href="/" aria-label="{{.Brand}}">
+      <svg class="mark" viewBox="0 0 32 32" aria-hidden="true" focusable="false">
+        <circle cx="16" cy="16" r="13.5" fill="none" stroke="currentColor" stroke-width="1.9"/>
+        <path d="M16 6.5 L18.1 13.9 L25.5 16 L18.1 18.1 L16 25.5 L13.9 18.1 L6.5 16 L13.9 13.9 Z" fill="currentColor"/>
+        <circle cx="24.2" cy="7.8" r="1.4" fill="currentColor"/>
+      </svg>
+      <span class="brand-word">{{.Brand}}</span>
+    </a>
+  </div>
+</header>
+<main id="main" tabindex="-1">
+{{template "main" .}}
+</main>
+</body>
+</html>
+{{end}}

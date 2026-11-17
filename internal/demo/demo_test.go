@@ -11,14 +11,23 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Will-Luck/waymark/internal/app"
-	"github.com/Will-Luck/waymark/internal/model"
-	"github.com/Will-Luck/waymark/internal/store"
+	"github.com/Will-Luck/forgemap/internal/app"
+	"github.com/Will-Luck/forgemap/internal/forge"
+	"github.com/Will-Luck/forgemap/internal/model"
+	"github.com/Will-Luck/forgemap/internal/store"
+	"github.com/Will-Luck/forgemap/internal/web"
 )
 
 // fixedNow is the moment every fixture is generated for; the other packages'
 // tests use the same one.
 var fixedNow = time.Date(2026, 10, 31, 22, 0, 0, 0, time.UTC)
+
+// TestMain lets forge reads retry at once: the awkward world's repo list
+// answers 502 on every try, and real waits would cost seconds a run.
+func TestMain(m *testing.M) {
+	forge.RetryWaits = []time.Duration{0, 0}
+	os.Exit(m.Run())
+}
 
 // demoApp is demo mode for w at fixedNow: the real pipeline against the fake
 // forges, not yet run. The feed keeps the mtime it was written with, so no
@@ -306,8 +315,67 @@ func TestSeedDataOnce(t *testing.T) {
 		t.Errorf("events = %d, want %d once", len(got), len(w.Events))
 	}
 	for key := range w.ProbeHistory() {
-		if n := len(st.ProbeHistory(key, fixedNow)); n != 144 {
-			t.Errorf("%s: %d points, want a day of 144", key, n)
+		if n := len(st.ProbeHistory(key, fixedNow)); n != 720 {
+			t.Errorf("%s: %d points, want a day of 720 (one every 2 minutes)", key, n)
+		}
+	}
+}
+
+// A hold with no commits since it began, through the real pipeline and
+// pages: the board card and the project page badge it On hold once, with no
+// Parked or Frozen chip beside the badge; the page's callout keeps the kind.
+// The demo's own Inkwell has commits since its hold, so this moves the hold
+// to after Inkwell's newest commit (12 days ago).
+func TestQuietHoldBadgedOnce(t *testing.T) {
+	for _, tc := range []struct{ kind, icon, word string }{
+		{"parked", "pause", "Parked"},
+		{"frozen", "snowflake", "Frozen"},
+	} {
+		w := Dataset(fixedNow)
+		cfg := w.Repo("gitea", ConfigRepo)
+		from := `hold: {kind: parked, since: "` + date(fixedNow.Add(-40*day)) + `"`
+		to := `hold: {kind: ` + tc.kind + `, since: "` + date(fixedNow.Add(-10*day)) + `"`
+		if !strings.Contains(cfg.Files["projects.yaml"], from) {
+			t.Fatalf("the projects file no longer holds %q", from)
+		}
+		cfg.Files["projects.yaml"] = strings.Replace(cfg.Files["projects.yaml"], from, to, 1)
+		a, _ := demoApp(t, w)
+		s := runOnce(t, a)
+		if p := project(t, s, "inkwell"); p.Hold == nil || p.Hold.Kind != tc.kind || p.Hold.Contradicted {
+			t.Fatalf("%s: inkwell hold = %+v, want one with no commits since", tc.kind, p.Hold)
+		}
+
+		srv := web.New(model.NewStaticSource(s), web.Options{Version: "test", Now: func() time.Time { return fixedNow }})
+		page := func(path string) string {
+			rec := httptest.NewRecorder()
+			srv.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+			if rec.Code != http.StatusOK {
+				t.Fatalf("%s: %d", path, rec.Code)
+			}
+			return rec.Body.String()
+		}
+		board, proj := page("/"), page("/p/inkwell")
+		pill := `<use href="#i-` + tc.icon + `"></use></svg>On hold</span>`
+		parts := strings.SplitN(board, `data-live-card="inkwell"`, 2)
+		if len(parts) != 2 {
+			t.Fatalf("%s: no inkwell card on the board", tc.kind)
+		}
+		card, _, _ := strings.Cut(parts[1], "</article>")
+		if !strings.Contains(card, pill) {
+			t.Errorf("%s: the board card lacks the On hold pill %q", tc.kind, pill)
+		}
+		if !strings.Contains(proj, `<p class="pmeta"><span class="tp t-hold">`) || !strings.Contains(proj, pill) {
+			t.Errorf("%s: the project page lacks the On hold pill", tc.kind)
+		}
+		if w := "<b>" + tc.word + " since 21 Oct 2026.</b>"; !strings.Contains(proj, w) {
+			t.Errorf("%s: the hold callout lacks %q", tc.kind, w)
+		}
+		for name, body := range map[string]string{"board card": card, "project page": proj} {
+			for _, chip := range []string{"<span>Parked</span>", "<span>Frozen</span>", "<span>On hold</span>"} {
+				if strings.Contains(body, chip) {
+					t.Errorf("%s: the %s has a chip %q beside the badge", tc.kind, name, chip)
+				}
+			}
 		}
 	}
 }

@@ -24,13 +24,19 @@ COPY . .
 ARG TARGETOS
 ARG TARGETARCH
 ARG VERSION=dev
-RUN GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" -o /out/waymark ./cmd/waymark
+RUN GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" -o /out/forgemap ./cmd/forgemap
+
+# The binary alone, so CI can build each platform with no emulation:
+#   docker build --platform linux/arm64 --target binary --output type=local,dest=out .
+# A plain docker build skips this stage: the image is the last stage.
+FROM scratch AS binary
+COPY --from=builder /out/forgemap /forgemap
 
 FROM alpine:${ALPINE_VERSION}
 
 ARG VERSION=dev
-LABEL org.opencontainers.image.source="https://github.com/Will-Luck/waymark" \
-      org.opencontainers.image.title="Waymark" \
+LABEL org.opencontainers.image.source="https://github.com/Will-Luck/forgemap" \
+      org.opencontainers.image.title="ForgeMap" \
       org.opencontainers.image.description="A live status page for every project on your Gitea, Forgejo and GitHub accounts" \
       org.opencontainers.image.licenses="MIT" \
       org.opencontainers.image.version="${VERSION}"
@@ -42,14 +48,14 @@ RUN apk add --no-cache ca-certificates tzdata
 # /data is created and chowned BEFORE the VOLUME declaration: Docker seeds a
 # fresh named volume from the image path including its ownership, so skipping
 # this leaves the volume root-owned and uid 1000 cannot write state.json.
-# /config is where waymark.yml is read from: bind-mount a directory there
+# /config is where forgemap.yml is read from: bind-mount a directory there
 # read-only (no VOLUME, the image never writes to it).
-RUN addgroup -g 1000 waymark \
- && adduser -D -H -u 1000 -G waymark waymark \
+RUN addgroup -g 1000 forgemap \
+ && adduser -D -H -u 1000 -G forgemap forgemap \
  && mkdir -p /data /config \
  && chown 1000:1000 /data
 
-COPY --from=builder /out/waymark /usr/local/bin/waymark
+COPY --from=builder /out/forgemap /usr/local/bin/forgemap
 
 VOLUME /data
 EXPOSE 8080
@@ -57,11 +63,13 @@ USER 1000
 
 # No ENV defaults here on purpose: internal/config owns every default, and a
 # baked ENV would silently outrank it. Tokens come from docker run -e. The
-# config file is /config/waymark.yml when it exists (WAYMARK_CONFIG names
-# another path); without one the env-only quick start runs. The web layer
-# embeds its own assets, so there is nothing else to copy.
+# config file is /config/forgemap.yml when it exists (FORGEMAP_CONFIG names
+# another path); without one the quick-start variables are read, and with
+# neither a fresh /data is set up in the browser. The web layer embeds its
+# own assets, so there is nothing else to copy.
 #
 # No HEALTHCHECK: add one in your own runtime if you want it. GET /healthz
-# answers 200 once the server is up, with each source's state.
+# answers 200 once the server is up, with each source's state, except on an
+# install set up in the browser that asks for sign-in (or is not set up yet).
 
-ENTRYPOINT ["/usr/local/bin/waymark"]
+ENTRYPOINT ["/usr/local/bin/forgemap"]

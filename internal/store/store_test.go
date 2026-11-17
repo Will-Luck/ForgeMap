@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Will-Luck/waymark/internal/derive"
-	"github.com/Will-Luck/waymark/internal/model"
+	"github.com/Will-Luck/forgemap/internal/derive"
+	"github.com/Will-Luck/forgemap/internal/model"
 )
 
 var now = time.Date(2026, 10, 31, 22, 0, 0, 0, time.UTC)
