@@ -8,7 +8,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Will-Luck/forgemap/internal/auth"
 	"github.com/Will-Luck/forgemap/internal/config"
+	"github.com/Will-Luck/forgemap/internal/settings"
 	"github.com/Will-Luck/forgemap/internal/web"
 )
 
@@ -254,6 +256,69 @@ func TestRemoveForgeRefusedWhenStillNeeded(t *testing.T) {
 	}
 	if err := g.m.RemoveForge("gitea-2"); err != nil || len(g.st.Get().Config.Forges) != 1 {
 		t.Errorf("removing a spare forge: %v", err)
+	}
+}
+
+// Setup holds a projects or ideas file read through a forge only after an
+// import. Settings cannot be opened until Finish, so during setup the refusal
+// says to finish setup first; after Finish it is Settings' own words again.
+func TestRemoveForgeDuringSetupSaysFinishFirst(t *testing.T) {
+	const (
+		projects      = "The projects file is read through this forge. Finish setup, then change Projects file in Settings, Extra sources."
+		ideas         = "The ideas file is read through this forge. Finish setup, then change Ideas file in Settings, Extra sources."
+		projectsAfter = "The projects file is read through this forge. Change Projects file in Settings, Extra sources, first."
+		ideasAfter    = "The ideas file is read through this forge. Change Ideas file in Settings, Extra sources, first."
+	)
+	refused := func(t *testing.T, err error) []string {
+		t.Helper()
+		var fe *web.FormError
+		if !errors.As(err, &fe) {
+			t.Fatalf("removing the forge a file is read through: %v", err)
+		}
+		var got []string
+		for _, p := range fe.Problems {
+			if p.Field != "" {
+				t.Errorf("a problem beside %q, want the top of the form", p.Field)
+			}
+			got = append(got, p.Message)
+		}
+		return got
+	}
+	ref := config.FileRef{Forge: "gitea", Repo: "acme/forgemap-config", Path: "projects.yaml"}
+	for _, tc := range []struct {
+		name          string
+		set           func(*config.Managed)
+		during, after []string
+	}{
+		{"projects", func(mc *config.Managed) { mc.Projects = ref }, []string{projects}, []string{projectsAfter}},
+		{"ideas", func(mc *config.Managed) { mc.Ideas.FileRef = ref }, []string{ideas}, []string{ideasAfter}},
+		{"both", func(mc *config.Managed) { mc.Projects, mc.Ideas.FileRef = ref, ref }, []string{projects, ideas}, []string{projectsAfter, ideasAfter}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			g := newRig(t)
+			code, hash := auth.NewSetupCode()
+			var mc config.Managed
+			mc.Forges = []config.ManagedForge{{ID: "gitea", Type: "gitea", URL: "https://git.example.com", Token: tok, Owners: []string{"acme"}}}
+			tc.set(&mc)
+			if err := settings.Create(g.dir, settings.File{Config: mc, SetupCode: hash}); err != nil {
+				t.Fatal(err)
+			}
+			g.restart(t)
+			if _, err := g.m.CreateAccount(post("/setup/account"), account(code)); err != nil {
+				t.Fatal(err)
+			}
+			if got := refused(t, g.m.RemoveForge("gitea")); !slices.Equal(got, tc.during) {
+				t.Errorf("during setup: refused with %q, want %q", got, tc.during)
+			}
+			g.finish(t, nil)
+			g.connect(t)
+			if got := refused(t, g.m.RemoveForge("gitea")); !slices.Equal(got, tc.after) {
+				t.Errorf("after Finish: refused with %q, want %q", got, tc.after)
+			}
+			if n := len(g.st.Get().Config.Forges); n != 2 {
+				t.Errorf("%d forges after the refusals, want 2", n)
+			}
+		})
 	}
 }
 

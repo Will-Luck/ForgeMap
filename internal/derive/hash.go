@@ -19,10 +19,14 @@ import (
 // "Exited (1)", health), so a restart the feed never saw down shows on the
 // next change or page load rather than re-publishing the card each hour.
 // No other text in the project counts finer than whole days.
+// The issues page's lists (IssuesAll, PRsAll, IssueRepos) are left out: no
+// card or live part shows them, so an item only they hold does not republish
+// the card.
 func Hash(p model.Project) string {
 	c := p
 	c.Hash = ""
 	c.Sources = nil
+	c.IssuesAll, c.PRsAll, c.IssueRepos = nil, nil, nil
 	if p.Deploy != nil {
 		d := *p.Deploy
 		d.CheckedAt = time.Time{}

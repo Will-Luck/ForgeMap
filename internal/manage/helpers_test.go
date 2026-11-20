@@ -127,6 +127,9 @@ func (r *reads) describe(_ context.Context, f config.Forge, _ string, hc *http.C
 	case f.Cert == "" && !r.passes:
 		return forge.Account{}, fmt.Errorf("gitea /user: %w", &tls.CertificateVerificationError{Err: x509.UnknownAuthorityError{}})
 	}
+	if f.Type == "github" && f.Token == "" { // as github.Client.Describe: no token, no account, no request
+		return forge.Account{}, forge.ErrNeedsToken
+	}
 	if r.refuses != "" && f.Token == r.refuses {
 		return forge.Account{}, fmt.Errorf("gitea /user: %w", &gitea.HTTPError{Status: http.StatusUnauthorized, Path: "/user"})
 	}

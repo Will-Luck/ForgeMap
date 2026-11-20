@@ -65,7 +65,8 @@ type Managed struct {
 	Refresh *bool `json:"refresh"`
 }
 
-// ManagedForge is one forge in Managed. ID is generated and never edited.
+// ManagedForge is one forge in Managed. ID is generated (or kept from a
+// config file by forgemap -import-config) and never edited.
 type ManagedForge struct {
 	ID      string   `json:"id"`
 	Type    string   `json:"type"`
@@ -114,6 +115,46 @@ func FromManaged(m Managed, getenv func(string) string) Config {
 	}
 	c.origin = OriginSettings
 	return c
+}
+
+// StandardGitHub reports whether f (normalised, as a Config holds it) is
+// GitHub at its standard API address: the address settings.json stores as
+// none and no page shows. A GitHub forge with an address of its own (only
+// forgemap -import-config makes one) is not.
+func (f Forge) StandardGitHub() bool {
+	return f.Type == "github" && strings.EqualFold(f.URL, githubAPI)
+}
+
+// AsManaged is c as settings.json stores it, for forgemap -import-config:
+// the values the install runs with, its defaults and the environment's
+// values included, so every list and switch is explicit. GitHub's own API
+// address is stored as none, as the page stores it; any other GitHub
+// address is kept. Listen, DataDir and Warnings have no place in it.
+// FromManaged(c.AsManaged(), ...) runs as c does.
+func (c Config) AsManaged() Managed {
+	var m Managed
+	m.Site.Title, m.Site.Timezone, m.Site.You = c.Site.Title, c.Site.Timezone, c.Site.You
+	m.IncludePrivate = c.IncludePrivate
+	for _, f := range c.Forges {
+		url, heatmap := f.URL, f.Heatmap
+		if f.StandardGitHub() {
+			url = ""
+		}
+		m.Forges = append(m.Forges, ManagedForge{
+			ID: f.ID, Type: f.Type, URL: url, Token: f.Token,
+			Owners: f.Owners, Heatmap: &heatmap, Forks: f.Forks, Cert: f.Cert,
+		})
+	}
+	m.Projects = c.Projects
+	m.Ideas.Labels, m.Ideas.FileRef, m.Ideas.Marker = c.Ideas.Labels, c.Ideas.File, c.Ideas.Marker
+	assigned, reviews := c.NeedsYou.Assigned, c.NeedsYou.ReviewRequests
+	m.NeedsYou.Labels, m.NeedsYou.Assigned, m.NeedsYou.ReviewRequests = c.NeedsYou.Labels, &assigned, &reviews
+	m.Notes.Type, m.Notes.Dir, m.Notes.Markers = c.Notes.Type, c.Notes.Dir, c.Notes.Markers
+	m.Plans.Dirs = c.Plans.Dirs
+	m.Docker.Feed, m.Docker.Host, m.Docker.Label = c.Docker.Feed, c.Docker.Host, c.Docker.Label
+	homepages, refresh := c.Probes.Homepages, !c.RefreshOff
+	m.Probes.Homepages, m.Refresh = &homepages, &refresh
+	return m
 }
 
 // pagePin is f's trusted certificate as the page saves one: 64 hex

@@ -163,6 +163,14 @@ type Project struct {
 	Relations         []Relation    `json:"relations"`
 	Links             []Link        `json:"links"`
 	Sources           []SourceStamp `json:"sources"` // what fed this project and when
+	// IssuesAll and PRsAll are what the issues page lists: up to 50 per repo,
+	// the primary repos' merged then the mirror's, each newest updated first,
+	// no cap per project. IssueRepos names the primary repos of a project
+	// that has more than one (nil otherwise), for that page's links. No other
+	// page reads these, and Hash leaves them out.
+	IssuesAll  []IssueInfo `json:"issues_all"`
+	PRsAll     []IssueInfo `json:"prs_all"`
+	IssueRepos []IssueRepo `json:"issue_repos,omitempty"`
 
 	// Hash changes whenever anything shown for the project changes.
 	Hash string `json:"hash"`
@@ -322,6 +330,19 @@ type IssueInfo struct {
 	// its forge gives no full detail for), not the primary's full read.
 	Mirror bool   `json:"mirror,omitempty"`
 	Forge  string `json:"forge,omitempty"` // that forge's name on the page
+	// Repo is the repo it was read from (owner/name); Draft marks a draft
+	// pull request.
+	Repo  string `json:"repo"`
+	Draft bool   `json:"draft,omitempty"`
+}
+
+// IssueRepo is one of a project's primary repos as the issues page links
+// it: its page and its own open counts.
+type IssueRepo struct {
+	FullName   string `json:"full_name"`
+	HTMLURL    string `json:"html_url"`
+	OpenIssues int    `json:"open_issues"`
+	OpenPRs    int    `json:"open_prs"`
 }
 
 type Label struct {
@@ -444,6 +465,34 @@ type GraphEdge struct {
 	From string `json:"from"`
 	To   string `json:"to"`
 	Kind string `json:"kind"`
+}
+
+// ShippedWindow is how far back the overview's Shipped in 30 days tile and
+// the ship log's 30-day view reach.
+const ShippedWindow = 30 * 24 * time.Hour
+
+// ShippedSince is where the shipped window starts: the snapshot's own time
+// less ShippedWindow, or now's when the site has none (a site built by hand).
+// A release counts when its date is after it.
+func (s *Site) ShippedSince(now time.Time) time.Time {
+	ref := s.GeneratedAt
+	if ref.IsZero() {
+		ref = now
+	}
+	return ref.Add(-ShippedWindow)
+}
+
+// ShippedReleases are the releases in the shipped window, newest first as in
+// Releases; nil when there are none.
+func (s *Site) ShippedReleases(now time.Time) []Release {
+	since := s.ShippedSince(now)
+	var out []Release
+	for _, r := range s.Releases {
+		if r.Date.After(since) {
+			out = append(out, r)
+		}
+	}
+	return out
 }
 
 // ProjectBySlug returns the project or nil.

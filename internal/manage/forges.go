@@ -24,6 +24,10 @@ const (
 	// your forges") would contradict the page the owner is on.
 	wordProjectsThrough = "The projects file is read through this forge. Change Projects file in Settings, Extra sources, first."
 	wordIdeasThrough    = "The ideas file is read through this forge. Change Ideas file in Settings, Extra sources, first."
+	// The same during setup (only an import puts such a file there), when
+	// Settings cannot be opened until Finish.
+	wordProjectsThroughSetup = "The projects file is read through this forge. Finish setup, then change Projects file in Settings, Extra sources."
+	wordIdeasThroughSetup    = "The ideas file is read through this forge. Finish setup, then change Ideas file in Settings, Extra sources."
 )
 
 // accountLife is how long ForgeDetail answers from the last read of a forge.
@@ -46,6 +50,14 @@ func (m *Manager) ForgeDetail(ctx context.Context, id string, recheck bool) (web
 	cfg := config.FromManaged(f.Config, m.getenv)
 	fg, saved := cfg.Forges[i], f.Config.Forges[i]
 	v := web.ForgeView{ForgeRow: forgeRows(cfg.Forges)[i], Heatmap: fg.Heatmap, Forks: fg.Forks}
+	if v.NoToken {
+		// Nothing to read it with: the page says what it does instead, and
+		// names the owners a token would list.
+		for _, o := range saved.Owners {
+			v.Owners = append(v.Owners, web.OwnerChoice{Login: o, Picked: true})
+		}
+		return v, nil
+	}
 	acct, err := m.account(ctx, fg, recheck)
 	if err != nil {
 		v.Problem = app.ConnWords(fg, err)
@@ -84,7 +96,7 @@ func (m *Manager) ConnectForge(ctx context.Context, f web.ForgeForm) (string, er
 	if typ != "gitea" && typ != "forgejo" && typ != "github" {
 		return "", formError("type", wordType)
 	}
-	if strings.TrimSpace(f.Token) == "" {
+	if strings.TrimSpace(f.Token) == "" && typ != "github" {
 		return "", formError("token", wordToken)
 	}
 	mf := config.ManagedForge{Type: typ, Token: f.Token}
@@ -104,9 +116,12 @@ func (m *Manager) ConnectForge(ctx context.Context, f web.ForgeForm) (string, er
 		}
 		fg.Cert = pin
 	}
-	acct, err := m.describe(ctx, fg, m.version, m.client)
-	if err != nil {
-		return "", m.testFailed(ctx, fg, err, f.Trust != "")
+	var acct forge.Account
+	if !noToken(fg) { // no token to test, and GitHub's address is fixed: saved untested
+		var err error
+		if acct, err = m.describe(ctx, fg, m.version, m.client); err != nil {
+			return "", m.testFailed(ctx, fg, err, f.Trust != "")
+		}
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -121,7 +136,9 @@ func (m *Manager) ConnectForge(ctx context.Context, f web.ForgeForm) (string, er
 		return "", fmt.Errorf("saving the forge: %w", err)
 	}
 	fg.ID = id
-	m.remember(fg, acct, nil)
+	if !noToken(fg) {
+		m.remember(fg, acct, nil)
+	}
 	if err := m.commitLocked(prev, saved); err != nil {
 		return "", err
 	}
@@ -134,12 +151,18 @@ func (m *Manager) ReplaceToken(ctx context.Context, id string, f web.ForgeForm) 
 	if i < 0 {
 		return web.ErrNoSuchForge
 	}
+	mf := cur.Config.Forges[i]
+	// The forge as it runs: its type normalised as config reads it, so a type
+	// saved as "GitHub" is GitHub here too.
+	running := config.FromManaged(cur.Config, m.getenv).Forges[i]
 	if strings.TrimSpace(f.Token) == "" {
+		if noToken(running) {
+			return formError("token", wordToken) // Add a token: there is no saved one to speak of
+		}
 		return formError("token", wordNewToken)
 	}
-	mf := cur.Config.Forges[i]
 	mf.Token = f.Token
-	if mf.Type != "github" && strings.TrimSpace(f.Address) != "" {
+	if running.Type != "github" && strings.TrimSpace(f.Address) != "" {
 		mf.URL = f.Address
 	}
 	fg, problems := m.candidateForge(cur.Config, i, mf)
@@ -147,7 +170,7 @@ func (m *Manager) ReplaceToken(ctx context.Context, id string, f web.ForgeForm) 
 		return &web.FormError{Problems: problems}
 	}
 	// A trusted certificate belongs to the address it was trusted for.
-	if fg.URL != config.FromManaged(cur.Config, m.getenv).Forges[i].URL {
+	if fg.URL != running.URL {
 		fg.Cert = ""
 	}
 	if f.Trust != "" {
@@ -183,7 +206,13 @@ func (m *Manager) ReplaceToken(ctx context.Context, id string, f web.ForgeForm) 
 			return web.ErrNoSuchForge
 		}
 		forges := slices.Clone(sf.Config.Forges)
-		forges[j].Token, forges[j].URL, forges[j].Cert = fg.Token, managedURL(fg), fg.Cert
+		addr := managedURL(fg)
+		if fg.Type == "github" {
+			// GitHub's address never changes here: keep the one the token
+			// was just tested at (an address of its own stays its own).
+			addr = mf.URL
+		}
+		forges[j].Token, forges[j].URL, forges[j].Cert = fg.Token, addr, fg.Cert
 		sf.Config.Forges = forges
 		return nil
 	})
@@ -246,14 +275,18 @@ func (m *Manager) RemoveForge(id string) error {
 	}
 	cand := prev.Config
 	cand.Forges = slices.Delete(slices.Clone(prev.Config.Forges), i, i+1)
+	projectsThrough, ideasThrough := wordProjectsThrough, wordIdeasThrough
+	if !prev.SetupDone {
+		projectsThrough, ideasThrough = wordProjectsThroughSetup, wordIdeasThroughSetup
+	}
 	var problems []web.FieldProblem
 	for _, p := range config.FromManaged(cand, m.getenv).Problems() {
 		switch p.Field {
 		case "forges":
 		case "projects.forge":
-			problems = append(problems, web.FieldProblem{Message: wordProjectsThrough})
+			problems = append(problems, web.FieldProblem{Message: projectsThrough})
 		case "ideas.forge":
-			problems = append(problems, web.FieldProblem{Message: wordIdeasThrough})
+			problems = append(problems, web.FieldProblem{Message: ideasThrough})
 		default:
 			problems = append(problems, web.FieldProblem{Message: p.Message})
 		}
@@ -367,6 +400,11 @@ func newID(forges []config.ManagedForge, typ string) string {
 		}
 	}
 }
+
+// noToken: a GitHub forge saved with no token. It lists nothing and reads,
+// anonymously, only the public repos a projects file names; with no token
+// there is nothing to test, so it is never read for its account.
+func noToken(fg config.Forge) bool { return fg.Type == "github" && fg.Token == "" }
 
 func forgeIndex(forges []config.ManagedForge, id string) int {
 	return slices.IndexFunc(forges, func(f config.ManagedForge) bool { return f.ID == id })

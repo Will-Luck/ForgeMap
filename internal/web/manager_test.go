@@ -255,20 +255,36 @@ func bodyHas(t *testing.T, name, body string, want, lack []string) {
 	}
 }
 
+// accountRoutes are setup, sign-in and Settings on a browser-set-up install;
+// the 404 page on every other.
+var accountRoutes = []string{"GET /setup", "POST /setup/account", "POST /setup/finish", "GET /signin", "POST /signin", "POST /signout",
+	"GET /settings", "POST /settings", "GET /settings/forges/new", "GET /settings/forges/gitea", "POST /settings/forges",
+	"POST /settings/forges/gitea", "POST /settings/forges/gitea/token", "POST /settings/forges/gitea/check",
+	"POST /settings/forges/gitea/remove", "POST /settings/forges/gitea/trust", "POST /settings/password", "POST /settings/key"}
+
 // No Manager (file, quick-start, demo, fixture): every new route is the 404
-// page it was, no page links to Settings or sign-in, /healthz is whole.
+// page it was, no page links to Settings or sign-in, /healthz is whole. With
+// FileInstall (a config-file or quick-start install) the same routes keep the
+// 404, its heading and both buttons, and add why there is no Settings page
+// with a link to the docs: never Sign in, never a link to /settings.
 func TestNoManagerNoNewRoutes(t *testing.T) {
 	h, _ := handler(t, "site.json", false)
-	for _, rt := range []string{"GET /setup", "POST /setup/account", "POST /setup/finish", "GET /signin", "POST /signin", "POST /signout",
-		"GET /settings", "POST /settings", "GET /settings/forges/new", "GET /settings/forges/gitea", "POST /settings/forges",
-		"POST /settings/forges/gitea", "POST /settings/forges/gitea/token", "POST /settings/forges/gitea/check",
-		"POST /settings/forges/gitea/remove", "POST /settings/forges/gitea/trust", "POST /settings/password", "POST /settings/key"} {
+	for _, rt := range accountRoutes {
 		method, path, _ := strings.Cut(rt, " ")
 		rec := send(t, h, method, path, false, url.Values{}, nil)
 		went(t, rt, rec, 404, "")
-		bodyHas(t, rt, rec.Body.String(), []string{"Nothing lives at"}, nil)
+		bodyHas(t, rt, rec.Body.String(), []string{"Nothing lives at"}, []string{noSettingsWords, "How to move it to Settings"})
 	}
-	for _, path := range []string{"/", "/p/beacon", "/ideas", "/ships", "/map", "/p/nope"} {
+	fh := fileInstall(t)
+	for _, rt := range accountRoutes {
+		method, path, _ := strings.Cut(rt, " ")
+		rec := send(t, fh, method, path, false, url.Values{}, nil)
+		went(t, "file install "+rt, rec, 404, "")
+		bodyHas(t, "file install "+rt, rec.Body.String(),
+			[]string{`Nothing lives at <span class="mono">` + path + `</span>.`, noSettingsWords, moveLinkHTML, "Search instead?", "Back to the overview"},
+			[]string{"Sign in", `href="/settings`, `href="/signin`, "<span>Settings</span>", "data-signin"})
+	}
+	for _, path := range []string{"/", "/p/beacon", "/ideas", "/ships", "/ships?days=30", "/issues", "/map", "/p/nope"} {
 		bodyHas(t, path, get(t, h, path).Body.String(), nil, []string{`href="/settings`, `href="/signin`, "Sign in", "<span>Settings</span>", "data-signin"})
 	}
 	bodyHas(t, "/healthz", get(t, h, "/healthz").Body.String(), []string{`"sources":[{`}, nil)

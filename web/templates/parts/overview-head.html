@@ -1,5 +1,5 @@
 {{define "overviewHead"}}<div data-live-head="overview" data-hash="{{.Hash}}">{{if .FirstRead}}
-  <p class="callout first-read" role="status">{{icon "loader-circle"}}<span><b>Reading your forges for the first time.</b> Projects appear here when it is done.</span></p>{{end}}
+  {{template "firstRead"}}{{end}}
   <section class="hero" aria-label="At a glance">
     <ul class="stats">
       {{range .Tiles}}<li>{{if .Href}}<a class="stat {{.Class}}" href="{{.Href}}">{{else}}<span class="stat {{.Class}}">{{end}}
@@ -27,6 +27,9 @@ fragment brings it along (overviewHeadLive), so live.js keeps it current. */}}
       <ul>{{range .Reasons}}<li><b>{{.Label}}</b> {{if .Failing}}{{.Error}}{{with .Note}}. {{.}}{{end}}{{else}}{{.Note}}{{end}}</li>{{end}}</ul>
       {{if .Managed}}<p>Choose what is tracked in <b>Settings</b>.</p>{{else}}<p><a href="https://github.com/Will-Luck/forgemap/wiki/Installation">Installation</a> says how to choose what is tracked.</p>{{end}}
     </div></div>{{end}}{{end}}
+
+{{/* The first read's note, on the overview's head and the issues page. */}}
+{{define "firstRead"}}<p class="callout first-read" role="status">{{icon "loader-circle"}}<span><b>Reading your forges for the first time.</b> Projects appear here when it is done.</span></p>{{end}}
 
 {{/* What /fragments/overview-head serves. */}}
 {{define "overviewHeadLive"}}{{template "overviewHead" .}}{{template "boardEmpty" .}}{{end}}

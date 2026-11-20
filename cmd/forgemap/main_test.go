@@ -12,7 +12,6 @@ import (
 	"testing"
 
 	"github.com/Will-Luck/forgemap/internal/config"
-	"github.com/Will-Luck/forgemap/internal/settings"
 )
 
 // With FORGEMAP_TEST_MAIN set, the test binary is forgemap itself: it runs
@@ -21,16 +20,18 @@ import (
 func TestMain(m *testing.M) {
 	if os.Getenv("FORGEMAP_TEST_MAIN") == "1" {
 		hashRounds = 1000 // PBKDF2 at a test's cost; internal/auth pins the real count
-		// The owner -reset-password sees on settings.json (FORGEMAP_TEST_OWNER),
-		// or on every file of the data folder, as a mount that maps owners
-		// shows them (FORGEMAP_TEST_MOUNT_OWNER), so a test can play another
-		// user without root.
+		// The owner -reset-password and -import-config see on what is
+		// already in the data folder (settings.json, state.json, the folder
+		// itself) but not on the file they make to probe it
+		// (FORGEMAP_TEST_OWNER), or on every file of the data folder, as a
+		// mount that maps owners shows them (FORGEMAP_TEST_MOUNT_OWNER), so a
+		// test can play another user without root.
 		onDisk := fileOwner
 		fileOwner = func(path string) (int, error) {
 			if v := os.Getenv("FORGEMAP_TEST_MOUNT_OWNER"); v != "" {
 				return strconv.Atoi(v)
 			}
-			if v := os.Getenv("FORGEMAP_TEST_OWNER"); v != "" && filepath.Base(path) == settings.FileName {
+			if v := os.Getenv("FORGEMAP_TEST_OWNER"); v != "" && !strings.HasPrefix(filepath.Base(path), "write-check-") {
 				return strconv.Atoi(v)
 			}
 			return onDisk(path)
@@ -119,9 +120,12 @@ func TestConfigSourceLogged(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(used, "state.json"), []byte("{}"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	// The start stops; the line says how to set up afresh and how to keep
+	// the history, which -import-config carries over.
+	const hint = "to set up in the browser, start with an empty data volume; to keep this folder's history, put the config back and run forgemap -import-config"
 	_, errOut, code = forgemap(t, "", "FORGEMAP_TITLE="+secret, "DATA_DIR="+used, "FORGEMAP_LISTEN=127.0.0.1:0")
 	if !strings.Contains(errOut, "config: environment only\n") || !strings.Contains(errOut, "forges: at least one forge is required") ||
-		!strings.Contains(errOut, freshHint+"\n") || strings.Contains(errOut, secret) || code != 1 {
+		!strings.Contains(errOut, " "+hint+"\n") || strings.Contains(errOut, secret) || code != 1 {
 		t.Errorf("env-only, data dir in use: exit %d, log:\n%s", code, errOut)
 	}
 	if _, err := os.Stat(filepath.Join(used, "settings.json")); err == nil {

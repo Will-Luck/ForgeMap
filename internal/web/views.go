@@ -45,7 +45,7 @@ func (s *server) derived(site *model.Site) *derived {
 	sum := sha256.Sum256(css)
 	d.cssHash = hex.EncodeToString(sum[:])[:12]
 	d.css = newAsset(css, contentTypes[".css"])
-	d.search = buildSearch(site)
+	d.search = buildSearch(site, s.opts.FileInstall)
 	d.heat = buildHeat(site.Heatmap)
 	d.graph = buildMap(site)
 	d.head = d.buildHead()
@@ -200,13 +200,16 @@ func (d *derived) buildHead() headView {
 		{Label: "Active", Icon: "zap", Href: "#tier-active", Value: st.Active, Class: "t-active"},
 		{Label: "Live", Icon: "radio", Href: "#tier-live", Value: st.Live, Class: "t-live"},
 		{Label: "Needs you", Icon: "hand", Href: "#needs-you", Value: needs, Class: "needs"},
-		// No Href: no page lists every open issue, and the board lists none.
-		{Label: "Open issues", Icon: "circle-dot", Value: st.OpenIssues, Note: plural(st.OpenPRs, "open PR", "open PRs")},
-		{Label: "Shipped in 30 days", Icon: "rocket", Href: "/ships", Value: st.ReleasesLast30d},
+		{Label: "Open issues", Icon: "circle-dot", Href: "/issues", Value: st.OpenIssues, Note: plural(st.OpenPRs, "open PR", "open PRs")},
+		{Label: "Shipped in 30 days", Icon: "rocket", Href: "/ships?days=30", Value: st.ReleasesLast30d},
 	}
 	if needs == 0 {
 		h.Tiles[3].Href = ""
 		h.Tiles[3].Class = "needs calm"
+	}
+	// At 0 the issues page has no issue to show for it: a plain stat.
+	if st.OpenIssues == 0 {
+		h.Tiles[4].Href = ""
 	}
 	h.Weeks = weekStrip(d.heat)
 	h.WeeksTotal = weeksTotal(d.heat)
@@ -799,11 +802,24 @@ type monthGroup struct {
 type shipsView struct {
 	Heat   heatView
 	Months []monthGroup
+	// Recent: only the releases the overview's Shipped in 30 days tile
+	// counts (/ships?days=30), Count of them.
+	Recent bool
+	Count  int
 }
 
-func (d *derived) ships() shipsView {
-	v := shipsView{Heat: d.heat}
-	for _, r := range d.site.Releases {
+// ships groups the releases by month in the site's zone, newest first. With
+// recent it lists only the shipped window's releases, by the site's own rule
+// (model.Site.ShippedReleases), and groups those, so a month counts only the
+// rows under it.
+func (d *derived) ships(recent bool, now time.Time) shipsView {
+	v := shipsView{Heat: d.heat, Recent: recent}
+	rels := d.site.Releases
+	if recent {
+		rels = d.site.ShippedReleases(now)
+		v.Count = len(rels)
+	}
+	for _, r := range rels {
 		label := r.Date.In(zone(d.site.Meta.Timezone)).Format("January 2006")
 		if n := len(v.Months); n == 0 || v.Months[n-1].Label != label {
 			v.Months = append(v.Months, monthGroup{Label: label})
@@ -1077,6 +1093,11 @@ type searchIndex struct {
 	Ideas    []searchIdea    `json:"ideas"`
 	Issues   []searchIssue   `json:"issues"`
 	Commands []searchCommand `json:"commands"`
+	// TypedCommands: palette.js matches these once something is typed, never
+	// in the list shown when the palette opens. They have a key of their own
+	// because an older palette.js, still running in a page left open across
+	// an upgrade, lists every entry of commands before anything is typed.
+	TypedCommands []searchCommand `json:"typed_commands,omitempty"`
 }
 
 type searchProject struct {
@@ -1118,7 +1139,9 @@ type searchCommand struct {
 	Action string `json:"action,omitempty"`
 }
 
-func buildSearch(site *model.Site) []byte {
+// buildSearch is the palette's index. fileInstall adds the command that
+// says a config-file or quick-start install has no Settings page.
+func buildSearch(site *model.Site, fileInstall bool) []byte {
 	ix := searchIndex{Projects: []searchProject{}, Ideas: []searchIdea{}, Issues: []searchIssue{}}
 	for _, p := range site.Projects {
 		ix.Projects = append(ix.Projects, searchProject{Name: p.Name, Summary: p.Summary, Slug: p.Slug, Tier: string(p.Tier),
@@ -1141,6 +1164,7 @@ func buildSearch(site *model.Site) []byte {
 	ix.Commands = append(ix.Commands,
 		searchCommand{ID: "go-ships", Label: "Ship log", Icon: "ship", URL: "/ships"},
 		searchCommand{ID: "go-map", Label: "Map", Icon: "orbit", URL: "/map"},
+		searchCommand{ID: "go-issues", Label: "Open issues", Icon: "circle-dot", URL: "/issues"},
 		searchCommand{ID: "theme", Label: "Toggle theme", Icon: "sun", Action: "theme"},
 	)
 	// With refreshes turned off there is none to ask for (the route is 404).
@@ -1151,6 +1175,13 @@ func buildSearch(site *model.Site) []byte {
 	// to pick, and with no Ideas page it would lead to a 404.
 	if len(ix.Ideas) > 0 {
 		ix.Commands = append(ix.Commands, searchCommand{ID: "surprise", Label: "Surprise me", Icon: "shuffle", Action: "surprise"})
+	}
+	// A config-file or quick-start install has no Settings page: typing
+	// finds why and the docs on moving it there, but a visitor who only
+	// opens the palette never meets it.
+	if fileInstall {
+		ix.TypedCommands = []searchCommand{{ID: "settings-off", Label: "Settings (off on this install)", Icon: "settings",
+			URL: MoveToSettingsURL}}
 	}
 	b, _ := json.Marshal(ix)
 	return b

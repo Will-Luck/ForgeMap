@@ -160,6 +160,7 @@ func (m *Manager) Status() web.Status {
 	st := web.Status{Admin: f.Admin != nil, SetupDone: f.Admin != nil && f.SetupDone, SignInToView: m.signIn.Load()}
 	if f.Admin == nil {
 		st.SetupLeft = m.setupLeft(m.now())
+		st.SetupCode = len(f.SetupCode) > 0
 	}
 	return st
 }

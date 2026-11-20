@@ -226,7 +226,8 @@
           "created_at": "2026-10-11T22:00:00Z",
           "updated_at": "2026-10-29T22:00:00Z",
           "source": "github",
-          "forge": "GitHub"
+          "forge": "GitHub",
+          "repo": "acme/kite"
         },
         {
           "number": 5,
@@ -251,7 +252,8 @@
           "created_at": "2026-10-17T22:00:00Z",
           "updated_at": "2026-10-24T22:00:00Z",
           "source": "github",
-          "forge": "GitHub"
+          "forge": "GitHub",
+          "repo": "acme/kite"
         }
       ],
       "prs": [
@@ -265,7 +267,8 @@
           "created_at": "2026-10-30T22:00:00Z",
           "updated_at": "2026-10-31T21:35:00Z",
           "source": "github",
-          "forge": "GitHub"
+          "forge": "GitHub",
+          "repo": "acme/kite"
         }
       ],
       "ci": [
@@ -423,7 +426,68 @@
           "at": "2026-10-31T22:00:00Z"
         }
       ],
-      "hash": "9c01057ea212bb3a"
+      "issues_all": [
+        {
+          "number": 3,
+          "title": "Shell completions for fish",
+          "url": "https://github.example.com/acme/kite/issues/3",
+          "labels": [
+            {
+              "name": "enhancement",
+              "color": "84b6eb"
+            }
+          ],
+          "author": "tom",
+          "comments": 0,
+          "created_at": "2026-10-11T22:00:00Z",
+          "updated_at": "2026-10-29T22:00:00Z",
+          "source": "github",
+          "forge": "GitHub",
+          "repo": "acme/kite"
+        },
+        {
+          "number": 5,
+          "title": "Read the config from TOML",
+          "url": "https://github.example.com/acme/kite/issues/5",
+          "labels": [
+            {
+              "name": "idea",
+              "color": "a855f7"
+            },
+            {
+              "name": "kind/quick-win",
+              "color": "22c55e"
+            },
+            {
+              "name": "size/S",
+              "color": "64748b"
+            }
+          ],
+          "author": "lena",
+          "comments": 2,
+          "created_at": "2026-10-17T22:00:00Z",
+          "updated_at": "2026-10-24T22:00:00Z",
+          "source": "github",
+          "forge": "GitHub",
+          "repo": "acme/kite"
+        }
+      ],
+      "prs_all": [
+        {
+          "number": 6,
+          "title": "Add shell completions",
+          "url": "https://github.example.com/acme/kite/pull/6",
+          "labels": [],
+          "author": "mark",
+          "comments": 0,
+          "created_at": "2026-10-30T22:00:00Z",
+          "updated_at": "2026-10-31T21:35:00Z",
+          "source": "github",
+          "forge": "GitHub",
+          "repo": "acme/kite"
+        }
+      ],
+      "hash": "dafb9a31bcecd5f0"
     },
     {
       "slug": "beacon",
@@ -4298,7 +4362,8 @@
           "created_at": "2026-10-28T22:00:00Z",
           "updated_at": "2026-10-30T22:00:00Z",
           "source": "gitea",
-          "forge": "Gitea"
+          "forge": "Gitea",
+          "repo": "acme/beacon"
         },
         {
           "number": 19,
@@ -4315,7 +4380,8 @@
           "created_at": "2026-10-22T22:00:00Z",
           "updated_at": "2026-10-27T22:00:00Z",
           "source": "gitea",
-          "forge": "Gitea"
+          "forge": "Gitea",
+          "repo": "acme/beacon"
         },
         {
           "number": 17,
@@ -4332,7 +4398,8 @@
           "created_at": "2026-10-21T22:00:00Z",
           "updated_at": "2026-10-25T22:00:00Z",
           "source": "gitea",
-          "forge": "Gitea"
+          "forge": "Gitea",
+          "repo": "acme/beacon"
         },
         {
           "number": 15,
@@ -4344,7 +4411,8 @@
           "created_at": "2026-10-22T22:00:00Z",
           "updated_at": "2026-10-22T22:00:00Z",
           "source": "gitea",
-          "forge": "Gitea"
+          "forge": "Gitea",
+          "repo": "acme/beacon"
         }
       ],
       "prs": [
@@ -4358,7 +4426,9 @@
           "created_at": "2026-10-27T22:00:00Z",
           "updated_at": "2026-10-28T22:00:00Z",
           "source": "gitea",
-          "forge": "Gitea"
+          "forge": "Gitea",
+          "repo": "acme/beacon",
+          "draft": true
         },
         {
           "number": 22,
@@ -4370,7 +4440,8 @@
           "created_at": "2026-10-20T22:00:00Z",
           "updated_at": "2026-10-25T22:00:00Z",
           "source": "gitea",
-          "forge": "Gitea"
+          "forge": "Gitea",
+          "repo": "acme/beacon"
         }
       ],
       "ci": [
@@ -4601,7 +4672,105 @@
           "at": "2026-10-31T22:00:00Z"
         }
       ],
-      "hash": "9ce090aaa9b1e6ee"
+      "issues_all": [
+        {
+          "number": 21,
+          "title": "Pick the default sound for new alerts",
+          "url": "https://git.example.com/acme/beacon/issues/21",
+          "labels": [
+            {
+              "name": "needs-you",
+              "color": "e11d48"
+            }
+          ],
+          "author": "priya",
+          "comments": 2,
+          "created_at": "2026-10-28T22:00:00Z",
+          "updated_at": "2026-10-30T22:00:00Z",
+          "source": "gitea",
+          "forge": "Gitea",
+          "repo": "acme/beacon"
+        },
+        {
+          "number": 19,
+          "title": "Webhook retries with backoff",
+          "url": "https://git.example.com/acme/beacon/issues/19",
+          "labels": [
+            {
+              "name": "idea",
+              "color": "a855f7"
+            }
+          ],
+          "author": "lena",
+          "comments": 1,
+          "created_at": "2026-10-22T22:00:00Z",
+          "updated_at": "2026-10-27T22:00:00Z",
+          "source": "gitea",
+          "forge": "Gitea",
+          "repo": "acme/beacon"
+        },
+        {
+          "number": 17,
+          "title": "The status page shows the wrong time zone",
+          "url": "https://git.example.com/acme/beacon/issues/17",
+          "labels": [
+            {
+              "name": "bug",
+              "color": "d73a4a"
+            }
+          ],
+          "author": "tom",
+          "comments": 3,
+          "created_at": "2026-10-21T22:00:00Z",
+          "updated_at": "2026-10-25T22:00:00Z",
+          "source": "gitea",
+          "forge": "Gitea",
+          "repo": "acme/beacon"
+        },
+        {
+          "number": 15,
+          "title": "Status badge for READMEs",
+          "url": "https://git.example.com/acme/beacon/issues/15",
+          "labels": [],
+          "author": "mark",
+          "comments": 0,
+          "created_at": "2026-10-22T22:00:00Z",
+          "updated_at": "2026-10-22T22:00:00Z",
+          "source": "gitea",
+          "forge": "Gitea",
+          "repo": "acme/beacon"
+        }
+      ],
+      "prs_all": [
+        {
+          "number": 23,
+          "title": "SMS alerts",
+          "url": "https://git.example.com/acme/beacon/pulls/23",
+          "labels": [],
+          "author": "lena",
+          "comments": 0,
+          "created_at": "2026-10-27T22:00:00Z",
+          "updated_at": "2026-10-28T22:00:00Z",
+          "source": "gitea",
+          "forge": "Gitea",
+          "repo": "acme/beacon",
+          "draft": true
+        },
+        {
+          "number": 22,
+          "title": "Dark theme for status pages",
+          "url": "https://git.example.com/acme/beacon/pulls/22",
+          "labels": [],
+          "author": "priya",
+          "comments": 4,
+          "created_at": "2026-10-20T22:00:00Z",
+          "updated_at": "2026-10-25T22:00:00Z",
+          "source": "gitea",
+          "forge": "Gitea",
+          "repo": "acme/beacon"
+        }
+      ],
+      "hash": "33a1716f6984c3c6"
     },
     {
       "slug": "ledger",
@@ -4759,7 +4928,8 @@
           "created_at": "2026-10-26T22:00:00Z",
           "updated_at": "2026-10-31T00:00:00Z",
           "source": "gitea",
-          "forge": "Gitea"
+          "forge": "Gitea",
+          "repo": "acme/ledger"
         },
         {
           "number": 29,
@@ -4776,7 +4946,8 @@
           "created_at": "2026-10-01T22:00:00Z",
           "updated_at": "2026-10-17T22:00:00Z",
           "source": "gitea",
-          "forge": "Gitea"
+          "forge": "Gitea",
+          "repo": "acme/ledger"
         }
       ],
       "prs": [
@@ -4790,7 +4961,8 @@
           "created_at": "2026-10-28T22:00:00Z",
           "updated_at": "2026-10-30T22:00:00Z",
           "source": "gitea",
-          "forge": "Gitea"
+          "forge": "Gitea",
+          "repo": "acme/ledger"
         }
       ],
       "ci": [
@@ -4955,7 +5127,55 @@
           "at": "2026-10-31T21:59:30Z"
         }
       ],
-      "hash": "e38a82bd3fdd9026"
+      "issues_all": [
+        {
+          "number": 31,
+          "title": "Choose the rounding rule for VAT",
+          "url": "https://git.example.com/acme/ledger/issues/31",
+          "labels": [],
+          "author": "tom",
+          "comments": 6,
+          "created_at": "2026-10-26T22:00:00Z",
+          "updated_at": "2026-10-31T00:00:00Z",
+          "source": "gitea",
+          "forge": "Gitea",
+          "repo": "acme/ledger"
+        },
+        {
+          "number": 29,
+          "title": "Export invoices as PDF",
+          "url": "https://git.example.com/acme/ledger/issues/29",
+          "labels": [
+            {
+              "name": "enhancement",
+              "color": "84b6eb"
+            }
+          ],
+          "author": "priya",
+          "comments": 0,
+          "created_at": "2026-10-01T22:00:00Z",
+          "updated_at": "2026-10-17T22:00:00Z",
+          "source": "gitea",
+          "forge": "Gitea",
+          "repo": "acme/ledger"
+        }
+      ],
+      "prs_all": [
+        {
+          "number": 33,
+          "title": "Batch import from CSV",
+          "url": "https://git.example.com/acme/ledger/pulls/33",
+          "labels": [],
+          "author": "tom",
+          "comments": 1,
+          "created_at": "2026-10-28T22:00:00Z",
+          "updated_at": "2026-10-30T22:00:00Z",
+          "source": "gitea",
+          "forge": "Gitea",
+          "repo": "acme/ledger"
+        }
+      ],
+      "hash": "0a14510d1330350c"
     },
     {
       "slug": "office-network",
@@ -5040,7 +5260,9 @@
           "at": "2026-10-31T22:00:00Z"
         }
       ],
-      "hash": "c0e33841a4adc41b"
+      "issues_all": [],
+      "prs_all": [],
+      "hash": "f71774722298f408"
     },
     {
       "slug": "atlas",
@@ -8803,7 +9025,8 @@
           "created_at": "2026-10-19T22:00:00Z",
           "updated_at": "2026-10-26T22:00:00Z",
           "source": "gitea",
-          "forge": "Gitea"
+          "forge": "Gitea",
+          "repo": "acme/atlas"
         }
       ],
       "prs": [],
@@ -8936,7 +9159,28 @@
           "at": "2026-10-31T22:00:00Z"
         }
       ],
-      "hash": "3df08ab89350b2a2"
+      "issues_all": [
+        {
+          "number": 6,
+          "title": "Tiles blur at zoom 18",
+          "url": "https://git.example.com/acme/atlas/issues/6",
+          "labels": [
+            {
+              "name": "bug",
+              "color": "d73a4a"
+            }
+          ],
+          "author": "tom",
+          "comments": 2,
+          "created_at": "2026-10-19T22:00:00Z",
+          "updated_at": "2026-10-26T22:00:00Z",
+          "source": "gitea",
+          "forge": "Gitea",
+          "repo": "acme/atlas"
+        }
+      ],
+      "prs_all": [],
+      "hash": "a86f2fe3aaf3fd8d"
     },
     {
       "slug": "beacon-app",
@@ -9056,7 +9300,8 @@
           "created_at": "2026-09-11T22:00:00Z",
           "updated_at": "2026-09-21T22:00:00Z",
           "source": "gitea",
-          "forge": "Gitea"
+          "forge": "Gitea",
+          "repo": "acme/beacon-app"
         }
       ],
       "prs": [],
@@ -9187,7 +9432,28 @@
           "at": "2026-10-31T22:00:00Z"
         }
       ],
-      "hash": "9ca33a4a47159d08"
+      "issues_all": [
+        {
+          "number": 4,
+          "title": "Android Auto support",
+          "url": "https://git.example.com/acme/beacon-app/issues/4",
+          "labels": [
+            {
+              "name": "enhancement",
+              "color": "84b6eb"
+            }
+          ],
+          "author": "tom",
+          "comments": 0,
+          "created_at": "2026-09-11T22:00:00Z",
+          "updated_at": "2026-09-21T22:00:00Z",
+          "source": "gitea",
+          "forge": "Gitea",
+          "repo": "acme/beacon-app"
+        }
+      ],
+      "prs_all": [],
+      "hash": "7f0aa22cc908d519"
     },
     {
       "slug": "harbour",
@@ -12931,7 +13197,8 @@
           "created_at": "2026-09-01T22:00:00Z",
           "updated_at": "2026-10-01T22:00:00Z",
           "source": "gitea",
-          "forge": "Gitea"
+          "forge": "Gitea",
+          "repo": "acme/harbour"
         },
         {
           "number": 7,
@@ -12949,7 +13216,8 @@
           "updated_at": "2026-10-29T22:00:00Z",
           "source": "github",
           "mirror": true,
-          "forge": "GitHub"
+          "forge": "GitHub",
+          "repo": "acme/harbour"
         },
         {
           "number": 9,
@@ -12967,7 +13235,8 @@
           "updated_at": "2026-10-23T22:00:00Z",
           "source": "github",
           "mirror": true,
-          "forge": "GitHub"
+          "forge": "GitHub",
+          "repo": "acme/harbour"
         }
       ],
       "prs": [],
@@ -13104,7 +13373,61 @@
           "at": "2026-10-31T22:00:00Z"
         }
       ],
-      "hash": "29bba87a1112fac2"
+      "issues_all": [
+        {
+          "number": 11,
+          "title": "Quotas per namespace",
+          "url": "https://git.example.com/acme/harbour/issues/11",
+          "labels": [],
+          "author": "priya",
+          "comments": 0,
+          "created_at": "2026-09-01T22:00:00Z",
+          "updated_at": "2026-10-01T22:00:00Z",
+          "source": "gitea",
+          "forge": "Gitea",
+          "repo": "acme/harbour"
+        },
+        {
+          "number": 7,
+          "title": "Publish an arm64 image",
+          "url": "https://github.example.com/acme/harbour/issues/7",
+          "labels": [
+            {
+              "name": "enhancement",
+              "color": "84b6eb"
+            }
+          ],
+          "author": "lena",
+          "comments": 5,
+          "created_at": "2026-10-11T22:00:00Z",
+          "updated_at": "2026-10-29T22:00:00Z",
+          "source": "github",
+          "mirror": true,
+          "forge": "GitHub",
+          "repo": "acme/harbour"
+        },
+        {
+          "number": 9,
+          "title": "Garbage collection skips untagged layers",
+          "url": "https://github.example.com/acme/harbour/issues/9",
+          "labels": [
+            {
+              "name": "bug",
+              "color": "d73a4a"
+            }
+          ],
+          "author": "tom",
+          "comments": 1,
+          "created_at": "2026-10-23T22:00:00Z",
+          "updated_at": "2026-10-23T22:00:00Z",
+          "source": "github",
+          "mirror": true,
+          "forge": "GitHub",
+          "repo": "acme/harbour"
+        }
+      ],
+      "prs_all": [],
+      "hash": "a394b02f9a81fcd2"
     },
     {
       "slug": "inkwell",
@@ -13303,7 +13626,9 @@
           "at": "2026-10-31T22:00:00Z"
         }
       ],
-      "hash": "dee9f709f334dbe4"
+      "issues_all": [],
+      "prs_all": [],
+      "hash": "59e3db3bcfebb280"
     },
     {
       "slug": "vault",
@@ -13495,7 +13820,9 @@
           "at": "2026-10-31T21:59:30Z"
         }
       ],
-      "hash": "9b33b4f456ce3b28"
+      "issues_all": [],
+      "prs_all": [],
+      "hash": "b3021f9482fbea73"
     },
     {
       "slug": "sandbox",
@@ -13572,7 +13899,9 @@
           "at": "2026-10-31T22:00:00Z"
         }
       ],
-      "hash": "6a69f22ef6f60b0f"
+      "issues_all": [],
+      "prs_all": [],
+      "hash": "69424a9c03c3f4dd"
     },
     {
       "slug": "old-site",
@@ -13649,7 +13978,9 @@
           "at": "2026-10-31T22:00:00Z"
         }
       ],
-      "hash": "b391b8f0ce6c9ec3"
+      "issues_all": [],
+      "prs_all": [],
+      "hash": "94c209367e8d3c55"
     }
   ],
   "needs_you": [

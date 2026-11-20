@@ -16,6 +16,19 @@ import (
 // errNoAccount: -reset-password found no account to reset.
 var errNoAccount = errors.New("reset-password: there is no account yet: open the page and set one up")
 
+// errNoAccountMoved: no account to reset, and a setup code is stored, so
+// -import-config moved this install and the page asks for its code.
+var errNoAccountMoved = errors.New("reset-password: this install was moved with -import-config and has no account yet: " +
+	"make it in the page with the setup code (lost it? put the config back, delete settings.json and run forgemap -import-config again)")
+
+// noAccount is the refusal for f, which has no account.
+func noAccount(f settings.File) error {
+	if f.SetupCode != nil {
+		return errNoAccountMoved
+	}
+	return errNoAccount
+}
+
 // fileOwner is the uid that owns the file at path. Tests replace it, so the
 // refusal of another user is seen without root.
 var fileOwner = func(path string) (int, error) {
@@ -48,8 +61,8 @@ func runResetPassword(getenv func(string) string, w io.Writer) error {
 	if err != nil {
 		return err
 	}
-	if st.Get().Admin == nil {
-		return errNoAccount
+	if f := st.Get(); f.Admin == nil {
+		return noAccount(f)
 	}
 	// The file is written anew, owned by whoever writes it: run as another
 	// user (sudo, or docker exec -u 0), the reset would leave a settings.json
@@ -79,7 +92,7 @@ func runResetPassword(getenv func(string) string, w io.Writer) error {
 	token, tokenHash := auth.NewOnce()
 	saved, err := st.Update(func(f *settings.File) error {
 		if f.Admin == nil {
-			return errNoAccount
+			return noAccount(*f)
 		}
 		a := *f.Admin
 		a.Password = h

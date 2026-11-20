@@ -29,8 +29,9 @@
         </div>
         <div class="frow-acts">
           <a class="btn" href="/settings/forges/{{.ID}}">Edit</a>
-          <a class="btn" href="/settings/forges/{{.ID}}#token">Replace token</a>
-          <form class="form-inline" method="post" action="/settings/forges/{{.ID}}/check"><button class="btn">{{icon "refresh-cw"}}Check again</button></form>
+          {{if .NoToken}}<a class="btn" href="/settings/forges/{{.ID}}#token">Add a token</a>
+          {{else}}<a class="btn" href="/settings/forges/{{.ID}}#token">Replace token</a>
+          <form class="form-inline" method="post" action="/settings/forges/{{.ID}}/check"><button class="btn">{{icon "refresh-cw"}}Check again</button></form>{{end}}
           <a class="btn quiet" href="/settings/forges/{{.ID}}#remove">Remove</a>
         </div>
       </div>{{else}}<p class="field-hint">No forge is connected yet.</p>{{end}}

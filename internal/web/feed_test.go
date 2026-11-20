@@ -220,7 +220,7 @@ func TestFeedLinksFollowTheRequest(t *testing.T) {
 func TestFeedLinkedFromEveryPage(t *testing.T) {
 	h, _ := handler(t, "site.json", false)
 	const link = `<link rel="alternate" type="application/atom+xml" href="/feed.atom" title="Acme projects: changes">`
-	for _, path := range []string{"/", "/p/beacon", "/ideas", "/ships", "/map", "/p/nope"} {
+	for _, path := range []string{"/", "/p/beacon", "/ideas", "/ships", "/ships?days=30", "/issues", "/map", "/p/nope"} {
 		if !strings.Contains(get(t, h, path).Body.String(), link) {
 			t.Errorf("%s: no feed link in the head", path)
 		}

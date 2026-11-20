@@ -403,6 +403,11 @@
   /* Shared bits */
   .sec-h { display: flex; align-items: center; flex-wrap: wrap; gap: 0.55rem; font-size: 1.35rem; margin-block-end: 0.9rem; }
   .sec-h > .i { color: var(--accent); inline-size: 1.25em; block-size: 1.25em; }
+  /* A long heading puts its words and count in one span: the span shares the
+     icon's row and the count wraps with the last word, raised to sit where a
+     flex-centred count does. */
+  .sec-h > span:not(.count) { flex: 1; }
+  .sec-h > span > .count { vertical-align: 0.2em; }
   .count {
     display: inline-block;
     font-size: 0.78rem;
@@ -1049,6 +1054,7 @@
   .heat-legend .hc:last-of-type { margin-inline-end: 0.35rem; }
 
   .month { margin-block-start: 1.4rem; }
+  .ships-all { margin-block-start: 1.4rem; }
   .month-h { display: flex; align-items: center; gap: 0.5rem; font-size: 1.05rem; padding-block: 0.3rem; margin-block-end: 0.6rem; }
   @media (width >= 760px) {
     .month-h { position: sticky; inset-block-start: var(--head-h); z-index: 2; background: color-mix(in oklch, var(--bg) 90%, transparent); backdrop-filter: blur(8px); }
@@ -1099,6 +1105,12 @@
     from { opacity: 0; translate: -14px 0; }
     to { opacity: 1; translate: 0 0; }
   }
+
+  /* Open issues */
+  .jump { margin-block-start: 0.5rem; color: var(--muted); }
+  .iss-proj + .iss-proj { margin-block-start: 1.3rem; padding-block-start: 1.1rem; border-block-start: 1px dashed var(--border); }
+  .iss-h { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; font-size: 1.1rem; margin-block-end: 0.6rem; }
+  .iss-more { display: flex; flex-wrap: wrap; align-items: center; gap: 0.35rem 0.6rem; margin-block-start: 0.6rem; color: var(--muted); }
 
   /* Map */
   .page-map main { padding-block-end: 0; }
@@ -1238,6 +1250,8 @@
   .nf-ic .i { inline-size: 4.5rem; block-size: 4.5rem; color: var(--accent); stroke-width: 1.4; }
   .nf-h { font-size: clamp(1.6rem, 4vw, 2.3rem); overflow-wrap: anywhere; }
   .nf-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 0.6rem; }
+  /* The Settings hint's link, the paragraph after its lead: icon and words. */
+  .nf .lead + p > a { display: inline-flex; align-items: center; gap: 0.4rem; }
   .suggest { display: grid; gap: 0.5rem; inline-size: min(100%, 32rem); text-align: start; }
   .suggest a { display: flex; align-items: center; gap: 0.75rem; padding: 0.6rem 0.8rem; border-radius: var(--radius); border: 1px solid var(--border); background: var(--surface); color: var(--text); text-decoration: none; }
   .suggest a:hover { border-color: var(--accent); }
@@ -1397,6 +1411,8 @@
   .muted { color: var(--muted); }
   .small { font-size: 0.85rem; }
   .mono { font-family: var(--mono); font-size: 0.92em; }
+  /* An issues page row's repo name: the row's other details' size. */
+  .meta.mono { font-size: 0.82rem; }
   .nobr { white-space: nowrap; }
 }
 

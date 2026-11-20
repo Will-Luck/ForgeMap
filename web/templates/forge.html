@@ -15,8 +15,11 @@
   <h1>{{$v.Name}}{{with $v.Address}} <small><span class="mono">{{.}}</span></small>{{end}}</h1>
   {{if not $v.AtToken}}{{template "refusedTop" (dict "F" $v.Form "Lead" "Not saved." "One" "setting needs" "Many" "settings need")}}
   {{template "formTop" $v.Form.Top}}{{end}}
-  {{with $v.Problem}}{{if not $v.ProblemAtTop}}<p class="callout warn">{{icon "triangle-alert"}}<span>{{.}}</span></p>{{end}}
-  {{else}}<p class="form-ok" role="status">{{icon "circle-check"}}<span>Connected as <b>{{$v.Login}}</b>. {{repoCount $v.Repos $v.Capped}} across {{ownersWith $v.Owners}}.</span></p>{{end}}
+  {{if $v.NoToken}}{{with $v.Live}}<p class="callout warn">{{icon "triangle-alert"}}<span>{{.}}</span></p>{{end}}
+  <p class="callout" role="status">{{icon "globe"}}<span>No token. ForgeMap reads only the public repos your projects file names on GitHub, at most 60 requests an hour. Add a token to list your own repos and count your commits.</span></p>
+  {{with $v.Owners}}<p class="field-hint">When you add a token, these owners are listed: {{range $i, $o := .}}{{if $i}}, {{end}}<b>{{$o.Login}}</b>{{end}}.</p>{{end}}
+  {{else}}{{with $v.Problem}}{{if not $v.ProblemAtTop}}<p class="callout warn">{{icon "triangle-alert"}}<span>{{.}}</span></p>{{end}}
+  {{else}}<p class="form-ok" role="status">{{icon "circle-check"}}<span>Connected as <b>{{$v.Login}}</b>. {{repoCount $v.Repos $v.Capped}} across {{ownersWith $v.Owners}}.</span></p>{{end}}{{end}}
   {{with $v.Trusted}}<section class="form-card" aria-label="Trusted certificate">
     <p class="form-ok">{{icon "shield-check"}}<span>You trust this forge's certificate. Fingerprint (SHA-256): <span class="mono">{{fingerprint .}}</span></span></p>
     <form class="form-inline" method="post" action="/settings/forges/{{$v.ID}}/trust"><input type="hidden" name="stop" value="on"><button class="btn">{{icon "circle-x"}}Stop trusting</button>
@@ -31,7 +34,7 @@
   </div></section>{{end}}
 
   <section class="form-card">
-    <form class="form" method="post" action="/settings/forges/{{$v.ID}}">
+    {{if not $v.NoToken}}<form class="form" method="post" action="/settings/forges/{{$v.ID}}">
       <fieldset class="field" id="owners">
         <legend>Whose repos to show</legend>
         <div class="chips">
@@ -50,13 +53,13 @@
         <div><label for="forks"><b>Show forks</b></label><p class="field-hint" id="hint-forks">Off: a fork shows only when the projects file names it.</p>{{template "fieldErr" (dict "Name" "forks" "Msg" (index $e "forks"))}}</div>
       </div>
       <div class="form-foot"><button class="btn accent">Save</button></div>
-    </form>
+    </form>{{end}}
     <p class="field-hint">Its name in a projects file: <code>{{$v.ID}}</code></p>
   </section>
 
   <section class="form-card">
     <form id="token" class="form" method="post" action="/settings/forges/{{$v.ID}}/token#token">{{/* the fragment survives the POST: a refusal opens here; a pass redirects to #top */}}
-      <h2>{{icon "key-round"}}Replace token</h2>
+      <h2>{{icon "key-round"}}{{if $v.NoToken}}Add a token{{else}}Replace token{{end}}</h2>
       {{if $v.AtToken}}{{template "refusedTop" (dict "F" $v.Form "Lead" "Not saved." "One" "box needs" "Many" "boxes need")}}
       {{template "formTop" $v.Form.Top}}{{end}}
       {{if ne $v.Type "github"}}<div class="field" data-address>
@@ -66,21 +69,21 @@
         {{template "fieldErr" (dict "Name" "address" "Msg" (index $e "address"))}}
       </div>{{end}}
       <div class="field">
-        <label for="new-token">New read-only token</label>
+        <label for="new-token">{{if $v.NoToken}}Read-only token{{else}}New read-only token{{end}}</label>
         <input type="password" class="input mono" id="new-token" autocomplete="off" spellcheck="false" required{{with index $e "token"}} aria-invalid="true"{{end}} aria-describedby="hint-token{{with index $e "token"}} err-token{{end}}" name="token" value="">
-        <p class="field-hint" id="hint-token">It is tested before it is saved. The old token stays until the new one works.</p>
+        <p class="field-hint" id="hint-token">It is tested before it is saved.{{if not $v.NoToken}} The old token stays until the new one works.{{end}}</p>
         {{template "fieldErr" (dict "Name" "token" "Msg" (index $e "token"))}}
       </div>
       {{if $v.AtToken}}{{template "certTick" (dict "C" $v.Form.Cert "Button" "Replace token" "ID" "new-trust")}}{{end}}
-      <div class="form-foot"><button class="btn">{{icon "key-round"}}Replace token</button></div>
+      <div class="form-foot"><button class="btn">{{icon "key-round"}}{{if $v.NoToken}}Add token{{else}}Replace token{{end}}</button></div>
     </form>
   </section>
 
   <section class="form-card">
-    <form class="form-inline" method="post" action="/settings/forges/{{$v.ID}}/check">
+    {{if not $v.NoToken}}<form class="form-inline" method="post" action="/settings/forges/{{$v.ID}}/check">
       <button class="btn">{{icon "refresh-cw"}}Check again</button>
       <span class="field-hint">Reads the forge again with the saved token.</span>
-    </form>
+    </form>{{end}}
     <details id="remove" class="danger">
       <summary>{{icon "circle-x"}}Remove this forge</summary>
       <p>ForgeMap stops reading it at once. Its projects leave the page unless another forge has them.</p>

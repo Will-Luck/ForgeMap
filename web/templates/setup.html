@@ -19,6 +19,12 @@
       <h2>{{icon "user"}}Make the admin account</h2>
       {{template "refusedTop" (dict "F" $v.Form "Lead" "Not done yet." "One" "box needs" "Many" "boxes need")}}
       {{template "formTop" $v.Form.Top}}
+      {{if $v.Code}}<div class="field">
+        <label for="code">Setup code</label>
+        <input type="text" class="input mono" id="code" autocomplete="off" autocapitalize="characters" spellcheck="false" required{{with index $e "code"}} aria-invalid="true"{{end}} aria-describedby="hint-code{{with index $e "code"}} err-code{{end}}" name="code" value="">
+        <p class="field-hint" id="hint-code">Printed once by <code>forgemap -import-config</code> when this install was moved to Settings.</p>
+        {{template "fieldErr" (dict "Name" "code" "Msg" (index $e "code"))}}
+      </div>{{end}}
       <div class="field">
         <label for="username">Username</label>
         <input type="text" class="input" id="username" autocomplete="username" autocapitalize="none" spellcheck="false" required{{with index $e "username"}} aria-invalid="true" aria-describedby="err-username"{{end}} name="username" value="{{$v.Username}}">
@@ -45,10 +51,12 @@
   <h1>Where is your code?</h1>
   <p class="lede">Connect one forge or several. ForgeMap only ever reads: give it a read-only token.</p>
   {{template "steps" 2}}
-  {{with $v.Settings.Forges}}<section class="form-card">
-    <h2>{{icon "git-branch"}}Connected</h2>
+  {{with $v.Settings.Forges}}<section class="form-card">{{$p := $v.Settings.Main.Projects}}{{$noProjects := not (or $p.File $p.Forge $p.Repo $p.Path)}}
+    <h2>{{icon "git-branch"}}Your forges</h2>
     {{range .}}<div class="frow">
-      <div class="frow-main"><b>{{.Name}}</b>{{with .Address}} <small class="mono">{{.}}</small>{{end}}</div>
+      <div class="frow-main"><p><b>{{.Name}}</b>{{if .NoToken}} <span class="fstate mut">{{icon "globe"}}<span>No token: public repos only</span></span>{{end}}</p>{{with .Address}}
+        <small class="mono">{{.}}</small>{{end}}
+        {{if and .NoToken $noProjects}}<p class="field-hint">Nothing shows until a projects file names repos on GitHub. Set one in Settings, Extra sources, after setup.</p>{{end}}</div>
       <a class="btn" href="/settings/forges/{{.ID}}">Edit</a>
     </div>{{end}}
   </section>{{end}}

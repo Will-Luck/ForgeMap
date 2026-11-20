@@ -52,13 +52,14 @@ type setupView struct {
 	Left        string // the time left in words: "4 minutes and 12 seconds"
 	LeftSeconds int    // the same, in whole seconds, for forms.js
 	Closed      bool
+	Code        bool // step 1 asks for the setup code (an imported install); the box is always empty
 }
 
 // stepOne is step 1 as st has it: the form with the time left, or the
 // closed page when the setup window has closed.
 func stepOne(st Status) setupView {
 	secs := int((st.SetupLeft + time.Second - 1) / time.Second) // a part second counts as one
-	return setupView{Step: 1, Window: leftWords(int(SetupWindow / time.Second)), Left: leftWords(secs), LeftSeconds: secs, Closed: secs <= 0}
+	return setupView{Step: 1, Window: leftWords(int(SetupWindow / time.Second)), Left: leftWords(secs), LeftSeconds: secs, Closed: secs <= 0, Code: st.SetupCode}
 }
 
 // leftWords words a count of seconds as forms.js does: "4 minutes and 12
@@ -87,7 +88,7 @@ func (s *server) renderSetup(w http.ResponseWriter, r *http.Request, status int,
 	case v.Step == 1 && v.Closed:
 		status = http.StatusForbidden
 	case v.Step == 1:
-		v.Form.order("username", "password", "confirm")
+		v.Form.order("code", "username", "password", "confirm")
 	case v.Step == 3:
 		v.Form.order("site.title", "site.timezone", "sign_in=who", "include_private")
 	}
@@ -123,7 +124,7 @@ func (s *server) setupAccount(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	v := r.PostForm
-	f := AccountForm{Username: strings.TrimSpace(v.Get("username")), Password: v.Get("password"), Confirm: v.Get("confirm")}
+	f := AccountForm{Username: strings.TrimSpace(v.Get("username")), Password: v.Get("password"), Confirm: v.Get("confirm"), Code: strings.TrimSpace(v.Get("code"))}
 	cs, err := s.opts.Manager.CreateAccount(r, f)
 	switch {
 	case err == nil:
@@ -137,7 +138,7 @@ func (s *server) setupAccount(w http.ResponseWriter, r *http.Request) {
 		view, code := stepOne(s.opts.Manager.Status()), http.StatusUnprocessableEntity
 		view.Username = f.Username
 		var ok bool
-		if view.Form, ok = refusal(err, "username", "password", "confirm"); !ok {
+		if view.Form, ok = refusal(err, "code", "username", "password", "confirm"); !ok {
 			code, view.Form = http.StatusInternalServerError, failed("making the account", "That did not work on the server. Try again; the server's log says why.", err)
 		}
 		s.renderSetup(w, r, code, view)

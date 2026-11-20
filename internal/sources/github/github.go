@@ -599,7 +599,7 @@ func (c *Client) FetchMirror(ctx context.Context, full string, now time.Time) (*
 		}
 	}
 	m := &forge.Mirror{Forge: c.id, FullName: meta.FullName, HTMLURL: meta.HTMLURL, Private: meta.Private, Stars: meta.Stars, OpenIssues: len(issues), FetchedAt: now.UTC()}
-	m.Issues = forge.SortByUpdated(issues)
+	m.Issues, m.AllIssues = forge.SortByUpdated(issues), forge.NewestAll(issues)
 	var rel forge.Release
 	switch _, err := c.getJSON(ctx, base+"/releases/latest", nil, &rel); {
 	case err == nil:

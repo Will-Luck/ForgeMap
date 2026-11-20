@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -74,6 +75,8 @@ func TestRoutes(t *testing.T) {
 			`Ideas from the ideas file (updated <b>30 Oct 2026</b>) and from issues labelled idea or enhancement. File one as an issue to make it real.`,
 			`data-surprise`, `id="idea-project"`}, landmarks...)},
 		{"/ships", 200, append([]string{`<a href="/ships" aria-current="page">`, `class="heat"`, `class="rel-line"`, `Current streak`}, landmarks...)},
+		{"/ships?days=30", 200, append([]string{`<a href="/ships" aria-current="page">`, `class="rel-line"`, `Shipped in the last 30 days`, `Show all 18 months</a>`}, landmarks...)},
+		{"/issues", 200, append([]string{`Open issues</h1>`, `id="open-issues"`, `id="open-prs"`, `class="iss-proj"`}, landmarks...)},
 		{"/map", 200, append([]string{`<a href="/map" aria-current="page">`, `id="map-svg"`, `<script type="application/json" id="graph">`,
 			`class="legend wrap"`, `map-list"`, `<b>Colour and the corner badge show its state</b>`, `<h2 class="legend-h">States</h2>`}, landmarks...)},
 		{"/p/no-such-project", 404, append([]string{`No project called <span class="mono">no-such-project</span>.`, `Search instead?`}, landmarks...)},
@@ -118,12 +121,56 @@ func TestJSONRoutes(t *testing.T) {
 			t.Errorf("%s: invalid JSON", c.path)
 		}
 	}
+	rawOff := get(t, h, "/api/search.json").Body.String()
 	var ix searchIndex
-	if err := json.Unmarshal(get(t, h, "/api/search.json").Body.Bytes(), &ix); err != nil {
+	if err := json.Unmarshal([]byte(rawOff), &ix); err != nil {
 		t.Fatal(err)
 	}
-	if len(ix.Projects) != 11 || len(ix.Ideas) != 12 || len(ix.Commands) != 7 || len(ix.Issues) == 0 {
+	if len(ix.Projects) != 11 || len(ix.Ideas) != 12 || len(ix.Commands) != 8 || len(ix.Issues) == 0 {
 		t.Errorf("search index: %d projects, %d ideas, %d issues, %d commands", len(ix.Projects), len(ix.Ideas), len(ix.Issues), len(ix.Commands))
+	}
+	// D5: a config-file or quick-start install (FileInstall) has one command
+	// more, which the palette lists only once something is typed. It is sent
+	// in typed_commands, a key the palette.js of 0.3.0 never reads: a page
+	// left open across the upgrade keeps that script, which lists every entry
+	// of commands before anything is typed. So commands is the same 8 with
+	// the fact on or off, and only a FileInstall sends typed_commands. The
+	// keys are read as palette.js reads them, from the JSON.
+	type wire struct {
+		Commands []searchCommand `json:"commands"`
+		Typed    []searchCommand `json:"typed_commands"`
+	}
+	var off, on wire
+	raw := get(t, fileInstall(t), "/api/search.json").Body.String()
+	if err := json.Unmarshal([]byte(rawOff), &off); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal([]byte(raw), &on); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range off.Commands {
+		if c.ID == "settings-off" || strings.Contains(c.URL, "moving-to-settings") {
+			t.Errorf("without FileInstall the palette has %+v", c)
+		}
+	}
+	if off.Typed != nil || strings.Contains(rawOff, "typed_commands") || strings.Contains(rawOff, "typed_only") {
+		t.Errorf("without FileInstall the index sends typed commands: %+v", off.Typed)
+	}
+	want := searchCommand{ID: "settings-off", Label: "Settings (off on this install)", Icon: "settings",
+		URL: "https://github.com/Will-Luck/forgemap/blob/main/docs/configuration.md#moving-to-settings"}
+	if !slices.Equal(on.Typed, []searchCommand{want}) || strings.Contains(raw, "typed_only") {
+		t.Errorf("FileInstall: typed_commands %+v; want only %+v, and no typed_only flag", on.Typed, want)
+	}
+	if !slices.Equal(on.Commands, off.Commands) || len(on.Commands) != 8 {
+		t.Errorf("FileInstall changes commands: %+v, want the same 8 as without it, %+v", on.Commands, off.Commands)
+	}
+	// Anti-goal A2: the index's projects, ideas and issues stay as they are.
+	var onIx searchIndex
+	if err := json.Unmarshal([]byte(raw), &onIx); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(onIx.Projects, ix.Projects) || !slices.Equal(onIx.Ideas, ix.Ideas) || !slices.Equal(onIx.Issues, ix.Issues) {
+		t.Error("FileInstall changes the search index's projects, ideas or issues")
 	}
 	var p model.Project
 	if err := json.Unmarshal(get(t, h, "/api/p/beacon.json").Body.Bytes(), &p); err != nil || p.Slug != "beacon" {
@@ -193,7 +240,7 @@ func TestSourceNoteShown(t *testing.T) {
 
 func TestSecurityHeaders(t *testing.T) {
 	h, _ := handler(t, "site.json", false)
-	for _, path := range []string{"/", "/p/beacon", "/ideas", "/ships", "/map", "/p/nope", "/api/site.json", "/p/beacon/card", "/healthz"} {
+	for _, path := range []string{"/", "/p/beacon", "/ideas", "/ships", "/ships?days=30", "/issues", "/map", "/p/nope", "/api/site.json", "/p/beacon/card", "/healthz"} {
 		rec := get(t, h, path)
 		if got := rec.Header().Get("Content-Security-Policy"); got != specCSP {
 			t.Errorf("%s: CSP %q", path, got)
@@ -212,7 +259,7 @@ func TestSecurityHeaders(t *testing.T) {
 func TestNoInlineStyleOrScript(t *testing.T) {
 	h, _ := handler(t, "site.json", false)
 	scriptRe := regexp.MustCompile(`<script\b[^>]*>`)
-	for _, path := range []string{"/", "/p/beacon", "/p/atlas", "/ideas", "/ships", "/map", "/p/nope"} {
+	for _, path := range []string{"/", "/p/beacon", "/p/atlas", "/ideas", "/ships", "/ships?days=30", "/issues", "/map", "/p/nope"} {
 		body := get(t, h, path).Body.String()
 		if strings.Contains(body, " style=") {
 			t.Errorf("%s: inline style attribute", path)
@@ -239,7 +286,7 @@ func TestEveryProjectRenders(t *testing.T) {
 				}
 			}
 		}
-		for _, path := range []string{"/", "/ideas", "/ships", "/map"} {
+		for _, path := range []string{"/", "/ideas", "/ships", "/ships?days=30", "/issues", "/map"} {
 			if rec := get(t, h, path); rec.Code != 200 {
 				t.Errorf("%s %s: %d %s", fx, path, rec.Code, firstLine(rec.Body.String()))
 			}
@@ -463,7 +510,7 @@ func TestRefresh(t *testing.T) {
 
 func TestEscaping(t *testing.T) {
 	h, _ := handler(t, "site-awkward.json", false)
-	for _, path := range []string{"/", "/p/odd-repo", "/p/odd-repo/card", "/map"} {
+	for _, path := range []string{"/", "/p/odd-repo", "/p/odd-repo/card", "/issues", "/map", "/ships?days=30"} {
 		body := get(t, h, path).Body.String()
 		if strings.Contains(body, "<script>alert") || strings.Contains(body, "<b>bold</b>") {
 			t.Errorf("%s: raw markup from data", path)
@@ -486,6 +533,11 @@ func TestEscaping(t *testing.T) {
 	// A bad label colour falls back instead of reaching the attribute.
 	if strings.Contains(broken, "zzzzzz") {
 		t.Error("unvalidated label colour reached the page")
+	}
+	// The issues page lists other people's text too.
+	issues := get(t, h, "/issues").Body.String()
+	if strings.Contains(issues, "<img src=x") || !strings.Contains(issues, "&lt;img src=x onerror=alert(1)&gt;") || strings.Contains(issues, "zzzzzz") {
+		t.Error("/issues: an issue title or label colour is not escaped")
 	}
 }
 
@@ -763,17 +815,34 @@ func TestIssueIdeaLinksItsIssue(t *testing.T) {
 	}
 }
 
-// A hero tile links only where the page lists what it counts; the board
-// lists no issues, so "Open issues" is a plain stat.
-func TestOpenIssuesTileIsNotALink(t *testing.T) {
+// A hero tile links only where a page lists what it counts: "Open issues"
+// opens the issues page while its number is above 0, and is a plain stat at
+// 0, as Needs you is. The palette reaches the page too; the nav does not.
+func TestOpenIssuesTileLinksToTheIssuesPage(t *testing.T) {
+	tileRe := regexp.MustCompile(`<(a|span) class="stat[^"]*"([^>]*)>\s*<span class="stat-label"><svg[^>]*><use href="#i-circle-dot"></use></svg>Open issues</span>`)
 	h, _ := handler(t, "site.json", false)
 	body := get(t, h, "/").Body.String()
-	m := regexp.MustCompile(`<(a|span) class="stat[^"]*"[^>]*>\s*<span class="stat-label"><svg[^>]*><use href="#i-circle-dot"></use></svg>Open issues</span>`).FindStringSubmatch(body)
-	if m == nil {
-		t.Fatal("no Open issues tile")
+	if m := tileRe.FindStringSubmatch(body); m == nil || m[1] != "a" || m[2] != ` href="/issues"` {
+		t.Errorf("Open issues tile (13 open) = %v, want a link to /issues", m)
 	}
-	if m[1] != "span" {
-		t.Errorf("Open issues tile is a link: %s", m[0])
+	if strings.Contains(body, `<a href="/issues"`) {
+		t.Error("the issues page has a nav entry")
+	}
+	var ix searchIndex
+	if err := json.Unmarshal(get(t, h, "/api/search.json").Body.Bytes(), &ix); err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, c := range ix.Commands {
+		found = found || c == searchCommand{ID: "go-issues", Label: "Open issues", Icon: "circle-dot", URL: "/issues"}
+	}
+	if !found {
+		t.Errorf("no Open issues command: %+v", ix.Commands)
+	}
+	site := acmeSite()
+	site.Stats = model.Stats{OpenIssues: 0, OpenPRs: 2}
+	if m := tileRe.FindStringSubmatch(get(t, serve(site), "/").Body.String()); m == nil || m[1] != "span" {
+		t.Errorf("Open issues tile at 0 = %v, want a plain stat", m)
 	}
 }
 
@@ -912,7 +981,7 @@ func shownText(body string) string {
 // registry, roundup) in any page's text, and the map's legend says state.
 func TestNoCodeWordsOnPages(t *testing.T) {
 	h, src := handler(t, "site.json", false)
-	paths := []string{"/", "/ideas", "/ships", "/map"}
+	paths := []string{"/", "/ideas", "/ships", "/ships?days=30", "/issues", "/map"}
 	for _, p := range src.Snapshot().Projects {
 		paths = append(paths, "/p/"+p.Slug)
 	}
@@ -984,7 +1053,7 @@ func TestSpriteHasEveryFixtureIcon(t *testing.T) {
 		}
 	}
 	for _, n := range []string{"zap", "radio", "moon", "hourglass", "pause", "snowflake", "archive", "check", "info", "triangle-alert",
-		"octagon-alert", "rocket", "link", "shield", "github", "folder-git-2", "circle-arrow-up"} {
+		"octagon-alert", "rocket", "link", "shield", "github", "folder-git-2", "circle-arrow-up", "circle-dot", "git-pull-request", "globe", "settings"} {
 		check(n)
 	}
 	if len(missing) > 0 {

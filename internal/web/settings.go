@@ -148,10 +148,12 @@ func (s *server) renderSettings(w http.ResponseWriter, r *http.Request, status i
 		for _, src := range d.site.Sources {
 			switch {
 			case src.Name != f.ID:
-			case src.OK:
-				l.State, l.Icon, l.Tone = "Connected", "circle-check", "ok"
-			default:
+			case !src.OK: // a failure wins, with its words: a tokenless forge fails too (the hourly limit)
 				l.State, l.Icon, l.Tone, l.Error = "Failing", "octagon-alert", "bad", src.Error
+			case f.NoToken:
+				l.State, l.Icon, l.Tone = "No token: public repos only", "globe", "mut"
+			default:
+				l.State, l.Icon, l.Tone = "Connected", "circle-check", "ok"
 			}
 		}
 		v.Rows = append(v.Rows, l)

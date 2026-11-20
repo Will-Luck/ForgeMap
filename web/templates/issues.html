@@ -1,0 +1,36 @@
+{{define "main"}}{{$v := .Data}}
+<div class="wrap">
+  <header class="page-head">
+    <h1 class="page-title">{{icon "circle-dot"}}Open issues</h1>
+    {{- if $v.Sections}}
+    <p class="lead">{{plural $v.OpenIssues "open issue" "open issues"}} and {{plural $v.OpenPRs "open pull request" "open pull requests"}} across {{plural $v.Projects "project" "projects"}}.</p>
+    {{- if eq (len $v.Sections) 2}}
+    <p class="jump">{{range $i, $s := $v.Sections}}{{if $i}} · {{end}}<a href="#{{$s.ID}}">{{$s.Title}}</a>{{end}}</p>
+    {{- end}}{{end}}
+  </header>
+{{range $v.Sections}}{{$s := .}}
+  <section class="block" aria-labelledby="{{.ID}}">
+    <h2 id="{{.ID}}" class="sec-h">{{icon .Icon}}{{.Title}}</h2>
+    {{range .Groups}}<div class="iss-proj">
+      <h3 class="iss-h"><a href="/p/{{.Slug}}">{{.Name}}</a>{{with .Main.Count}} <span class="count">{{plural . $s.One $s.Many}}</span>{{end}}</h3>
+      {{template "issueBlock" .Main}}
+      {{- with .Mirror}}
+      <h4 class="sub">{{icon "github"}}{{.Forge}} <span class="count">{{plural .Count $s.One $s.Many}}</span></h4>
+      {{template "issueBlock" .}}{{end}}
+    </div>
+    {{end}}
+  </section>
+{{else}}{{if $.Site.Meta.FirstRead}}
+  {{template "firstRead"}}{{else}}
+  <p class="ideas-empty show">{{icon "circle-check"}}<span><b>No open issues or pull requests.</b></span></p>{{end}}
+{{end}}
+</div>
+{{end}}
+
+{{define "issueBlock"}}{{if .Rows}}<ul class="issues">{{range .Rows}}
+  <li><a class="issue-link" href="{{.URL}}"><span class="mono num">#{{.Number}}</span> <span>{{.Title}}</span></a>
+    <span class="issue-meta">{{with .Labels}}<span class="labels">{{range .}}<span class="label"><svg class="ldot" viewBox="0 0 10 10" aria-hidden="true" focusable="false"><circle cx="5" cy="5" r="4" fill="{{labelColor .Color}}"/></svg>{{.Name}}</span>{{end}}</span>{{end}}{{if $.ShowRepo}}<span class="meta mono">{{.Repo}}</span>{{end}}{{if .Comments}}<span class="meta">{{plural .Comments "comment" "comments"}}</span>{{end}}{{if .Draft}}<span class="meta">{{icon "circle-dashed"}}<span>draft</span></span>{{end}}<span class="meta">updated {{ago .UpdatedAt}}</span></span></li>
+{{end}}</ul>{{end}}
+{{- if .Short}}
+<p class="iss-more small">{{if not .Rows}}{{icon "circle-dashed"}}<span>Not read yet.</span>{{else if .Unknown}}<span>Showing {{num (len .Rows)}}.</span>{{else}}<span>Showing {{num (len .Rows)}} of {{num .Count}}.</span>{{end}}{{range .Links}} <a href="{{.URL}}">{{.Text}}</a>{{end}}</p>
+{{- end}}{{end}}

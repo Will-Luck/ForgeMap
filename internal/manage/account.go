@@ -27,7 +27,24 @@ const (
 	wordTriesIn  = "Too many tries. Wait a minute and try again, or run forgemap -reset-password on the server: it sets a new password and prints a link that skips the wait."
 	wordCurrent  = "That is not your current password."
 	wordSignedIn = "Sign in again, then change your password."
+	wordNoCode   = "Type the setup code."
+	wordBadCode  = "That is not the setup code."
 )
+
+// codeProblem is what is wrong with the setup code typed in step 1 against
+// stored, the hash forgemap -import-config saved: nil when none is stored
+// or the code matches.
+func codeProblem(typed string, stored []byte) *web.FormError {
+	switch {
+	case len(stored) == 0:
+		return nil
+	case strings.TrimSpace(typed) == "":
+		return &web.FormError{Problems: []web.FieldProblem{{Field: "code", Message: wordNoCode}}}
+	case !auth.SetupCodeMatches(typed, stored):
+		return &web.FormError{Problems: []web.FieldProblem{{Field: "code", Message: wordBadCode}}}
+	}
+	return nil
+}
 
 // errMoved is a save that found the account or its sessions changed since
 // the form was checked.
@@ -53,11 +70,14 @@ func newPassword(password, confirm string) []web.FieldProblem {
 // CreateAccount is setup step 1, only while the setup window is open. The
 // check "is there an account", the hash and the save are one critical
 // section, and the save checks again on the file as read under the settings
-// lock, so another writer's account is never overwritten.
+// lock, so another writer's account is never overwritten. While a setup
+// code is stored (an imported install) the account needs it, checked on
+// the file under the lock too, and making the account removes it.
 func (m *Manager) CreateAccount(r *http.Request, f web.AccountForm) ([]*http.Cookie, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.store.Get().Admin != nil {
+	cur := m.store.Get()
+	if cur.Admin != nil {
 		return nil, web.ErrSetupClosed
 	}
 	// Decided here, on the POST itself: a form fetched while the window was
@@ -66,6 +86,9 @@ func (m *Manager) CreateAccount(r *http.Request, f web.AccountForm) ([]*http.Coo
 		return nil, web.ErrSetupWindowClosed
 	}
 	var problems []web.FieldProblem
+	if fe := codeProblem(f.Code, cur.SetupCode); fe != nil {
+		problems = append(problems, fe.Problems...)
+	}
 	user := strings.TrimSpace(f.Username)
 	if user == "" || utf8.RuneCountInString(user) > 64 || strings.IndexFunc(user, unicode.IsControl) >= 0 {
 		problems = append(problems, web.FieldProblem{Field: "username", Message: wordUser})
@@ -82,12 +105,25 @@ func (m *Manager) CreateAccount(r *http.Request, f web.AccountForm) ([]*http.Coo
 		if sf.Admin != nil {
 			return web.ErrSetupClosed
 		}
+		// The file decides: an import may have written its code since
+		// memory was read (an import run beside a server whose setup is open).
+		if fe := codeProblem(f.Code, sf.SetupCode); fe != nil {
+			return fe
+		}
 		sf.Admin = &settings.Admin{Username: user, Password: hash}
 		sf.SessionSecret, sf.DeviceSecret = auth.NewSecret(), auth.NewSecret()
 		sf.FeedKey = auth.NewFeedKey()
 		sf.SignIn = true
+		sf.SetupCode = nil // spent: the account it guarded exists
 		return nil
 	})
+	var fe *web.FormError
+	if errors.As(err, &fe) {
+		// The file holds a setup code memory has not read yet: read it now,
+		// so the step shown again has the code's box.
+		m.reload()
+		return nil, err
+	}
 	if errors.Is(err, web.ErrSetupClosed) {
 		return nil, err
 	}

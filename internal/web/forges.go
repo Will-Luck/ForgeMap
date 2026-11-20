@@ -36,7 +36,8 @@ func forgePath(id string) string { return "/settings/forges/" + url.PathEscape(i
 // page answers Replace token and opens at its form (#token), so the form's
 // refusal is drawn there rather than at the top of the page. ProblemAtTop:
 // the form's top lines already say Problem, so the page does not say it
-// twice.
+// twice. Live is the running page's error for a GitHub forge with no token,
+// drawn above its note.
 type forgeView struct {
 	ForgeView
 	Add          bool
@@ -47,6 +48,7 @@ type forgeView struct {
 	TokenAddress string
 	AtToken      bool
 	ProblemAtTop bool
+	Live         string
 }
 
 // renderForge shows the forge page: in the main layout once setup is
@@ -107,6 +109,9 @@ func (s *server) detail(w http.ResponseWriter, r *http.Request, status int, rech
 			typed(&v)
 		}
 		v.ProblemAtTop = !v.AtToken && v.Problem != "" && slices.Contains(v.Form.Top, v.Problem)
+		if v.NoToken {
+			v.Live = s.sourceError(id)
+		}
 		s.renderForge(w, r, status, v)
 	}
 }
@@ -119,6 +124,17 @@ func (s *server) failing(id string) bool {
 		}
 	}
 	return false
+}
+
+// sourceError is the running page's error for forge id, "" while its last
+// read worked or before the first one.
+func (s *server) sourceError(id string) string {
+	for _, src := range s.src.Snapshot().Sources {
+		if src.Name == id && !src.OK {
+			return src.Error
+		}
+	}
+	return ""
 }
 
 // noSuchForge answers for a forge id that is not there: the 404 page once
@@ -174,9 +190,9 @@ func (s *server) forgeEdit(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// connectForge tests and saves a forge in one step, then shows its edit
-// form. A failed test shows the form again (422) with the type and address
-// kept and the token gone. GitHub has one address and the form hides its
+// connectForge tests and saves a forge in one step (GitHub with no token is
+// saved untested), then shows its edit form. A failed test shows the form
+// again (422) with the type and address kept and the token gone. GitHub has one address and the form hides its
 // field, so an address typed before GitHub was chosen is dropped here as
 // forms.js drops it in the browser.
 func (s *server) connectForge(w http.ResponseWriter, r *http.Request) {

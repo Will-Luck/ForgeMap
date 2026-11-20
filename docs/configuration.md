@@ -9,6 +9,7 @@ optional except at least one forge.
 - [Environment variables](#environment-variables)
 - [Command-line flags](#command-line-flags)
 - [Set up in the browser](#set-up-in-the-browser)
+- [Moving to Settings](#moving-to-settings)
 - [The config file](#the-config-file): [`site`](#site),
   [`include_private`](#include_private), [`refresh`](#refresh), [`forges`](#forges),
   [`projects`](#projects), [`ideas`](#ideas), [`needs_you`](#needs_you),
@@ -98,11 +99,15 @@ one project, with Gitea first.
 | `-fixture <path>` | Serve a saved site JSON file (no sources are read); an edit to the file is served within a second and sent to open pages as a live update |
 | `-version` | Print `forgemap <version>` and exit |
 | `-reset-password` | Set up in the browser only: a new random password for the account; every browser is signed out; prints the password and a one-time sign-in link (it works once, for 15 minutes) and exits |
+| `-import-config` | Config file or quick start only: copies the forges, their tokens and the page settings into `settings.json`, prints a one-time setup code and the next steps, and exits. It contacts no forge. See [Moving to Settings](#moving-to-settings) |
 
 At start the log says which config it read (`config: /config/forgemap.yml`,
 `config: environment only`, or `config: settings in /data (set up in the
 browser)`), and warns of a token whose `${VAR}` is
-empty or not set; it never prints a value.
+empty or not set; it never prints a value. A config-file or quick-start
+install whose data folder holds no `settings.json` adds, once it is
+serving, `config: no Settings page on this install; forgemap -import-config
+moves it to Settings`.
 
 ## Set up in the browser
 
@@ -113,8 +118,13 @@ install is set up in the browser instead.
   `state.json`, `projects.cache.yaml` and `ideas.cache.json`, or a file
   whose name starts with one of those three (a left-over copy), is in it. A
   data dir already in use with no `settings.json` (a config mount gone
-  missing, say) stops the start as before, and the log adds how to set up
-  in the browser instead: start with an empty data volume.
+  missing, say) stops the start as before, and the log adds `to set up in
+  the browser, start with an empty data volume; to keep this folder's
+  history, put the config back and run forgemap -import-config` (the
+  config file, or the quick-start variables). A data dir that
+  `forgemap -import-config` gave a `settings.json` is set up in the browser
+  too, with the imported forges and settings, and step 1 asks for the setup
+  code (see [Moving to Settings](#moving-to-settings)).
 - **Which data dir:** `DATA_DIR`, else `/data`. A `data_dir` set inside a
   config file is not seen when that file is missing, so the check looks at
   `DATA_DIR` or `/data`. The user ForgeMap runs as (uid 1000 in the image)
@@ -140,8 +150,9 @@ install is set up in the browser instead.
   the feed key and the saved settings: after it, press **Make a new key** in
   Settings and check each forge and who can see the page.
 - **Settings** changes every key on this page but `listen` and `data_dir`,
-  and applies it live, without a restart. A forge's id is generated, never
-  edited, and is its name in a projects file.
+  and applies it live, without a restart. A forge's id is generated (or
+  kept from an imported config), never edited, and is its name in a
+  projects file.
 - **Who can see the page:** with "Only me, after signing in" in setup, or
   "Ask for sign-in to see the page" in Settings (on by default), the pages,
   the JSON API and the feed need the account. Settings always does.
@@ -174,7 +185,11 @@ install is set up in the browser instead.
 - **One address, several apps:** cookies are shared across the ports of one
   host name, so give ForgeMap a host name of its own.
 - **Forge requests** ignore `HTTP_PROXY` and `HTTPS_PROXY` and follow no
-  redirect. Each forge is tested with its token before it is saved.
+  redirect. A forge added in the page with a token is tested before it is
+  saved, and a GitHub forge added with no token is saved without a test. A
+  forge brought in by `forgemap -import-config` is not tested before it is
+  saved: it is first read when you open its page in setup (a GitHub forge
+  with no token is not: its page reads nothing), or when you finish setup.
 - **A forge with a self-signed certificate** (or one made for another
   name, or out of date): **Connect** shows the certificate, with who it
   was issued to and by, its last valid day and its fingerprint. Tick
@@ -187,6 +202,80 @@ install is set up in the browser instead.
   trusting the old one. GitHub is always checked the normal way. A config-file install has no such setting, nor has GitHub:
   mount the CA and set `SSL_CERT_FILE`, as the install guide's
   "Self-signed certificates" section shows.
+
+## Moving to Settings
+
+An install that runs from a config file or the quick-start variables moves
+to [setting up in the browser](#set-up-in-the-browser) with one command,
+and keeps its forges, their tokens, the page settings it runs with and its
+history. After the command you start ForgeMap again without its config,
+and the rest is done in the browser.
+
+1. Run `forgemap -import-config` as the user ForgeMap runs as, with the
+   install's own environment, so each `${VAR}` token resolves. In Docker:
+   `docker exec forgemap forgemap -import-config`. It reads the config as a
+   start does and prints the same warnings, contacts no forge, writes
+   `settings.json` (mode 0600) into the data folder, and prints what it
+   did, a one-time **setup code** and the next two steps, written for this
+   install. Until you do the next step, the install still runs from its
+   config.
+2. Start ForgeMap without its config: remove `FORGEMAP_CONFIG` if it is
+   set, and move or rename `/config/forgemap.yml` if it is there, since a
+   start without `FORGEMAP_CONFIG` reads that file. A `/config/waymark.yml`
+   or `WAYMARK_CONFIG` left from Waymark stops the start, so move or remove
+   it too. Remove each of `GITEA_URL`, `GITEA_TOKEN`, `GITHUB_TOKEN` and
+   `GITHUB_OWNERS` that is set: any one left makes the next start a quick
+   start again. Keep the config's folder mounted when your projects file,
+   ideas file or notes are in it. When the file set `listen` or
+   `data_dir`, set `FORGEMAP_LISTEN` or `DATA_DIR` to match. The command
+   names each of these that applies to your install. In Docker: rename
+   `forgemap.yml` in the config folder on the host (the container may
+   mount it read-only), or drop the config mount when nothing else is in
+   it. Then remove the container (`docker rm -f forgemap`) and run it
+   again with the same data volume (`-v forgemap-data:/data`) and without
+   the variables named above. `docker restart` is not enough: it keeps the
+   variables the container was made with.
+3. Open the page within 5 minutes and make your account with the setup
+   code. Setup goes on to the page step, and **Back** lists the imported
+   forges. **Finish** applies everything.
+
+- **The setup code** is 20 characters in groups of four, printed once.
+  `settings.json` keeps only its SHA-256, and making the account removes
+  it. It stops someone who reaches the page before you from taking an
+  install that already holds your tokens.
+- **A lost setup code** is replaced by running the command again: put the
+  config back, delete `settings.json` from the data folder, run
+  `forgemap -import-config` again for a new code, then do step 2 again.
+  `-reset-password` cannot help while there is no account, and says so.
+- **What is carried:** every forge with its id, its place in the list and
+  its token (a `${VAR}` token is stored as its value, in plain text, so a
+  later change to the variable no longer reaches it), and every page
+  setting as the install runs it, defaults and the values of
+  `FORGEMAP_TITLE`, `TZ`, `FORGEMAP_INCLUDE_PRIVATE`, `FORGEMAP_REFRESH`
+  and `FORGEMAP_FORKS` included. A GitHub forge with an address of its own
+  keeps it; Settings shows it and does not change it.
+- **What is not:** `listen` and `data_dir`, which are not settings. The
+  next start serves on `FORGEMAP_LISTEN`, else `:8080`, and keeps its data
+  in `DATA_DIR`, else `/data`.
+- **Who can see the page:** setup's page step asks. With sign-in on, feed
+  readers, scripts and push webhooks need the feed key from Settings, and
+  private repos show only with sign-in on.
+- **Forge requests** then ignore `HTTP_PROXY` and `HTTPS_PROXY` and follow
+  no redirect: a forge reached through a proxy or a redirect fails after
+  the move.
+- **It refuses**, and writes nothing, when the data folder already holds a
+  `settings.json`, a Gitea or Forgejo forge has no token, a forge's
+  address has a `?` or `#` part, a forge's id is `new`, `.` or `..` or
+  holds `/`, `?`, `#`, `%` or a space (rename it in the config and in the
+  projects file), or the data folder belongs to another user.
+- **To undo it** before step 2, delete `settings.json` from the data
+  folder, as the command's last line says. After the move, put the config
+  back: a config file or a quick-start variable is in charge whenever it is
+  there, and `settings.json` is not read. Delete it then too: it holds your
+  tokens. Before you start a version older than 0.3.1 on this data folder,
+  make your account first, or put the config back or delete
+  `settings.json`: an older version does not ask for the setup code, so
+  whoever opens its setup page first would get your tokens.
 
 ## The config file
 
@@ -279,7 +368,7 @@ release).
 | `forges[].id` | string | required | Your name for the forge. The projects file uses it as a repo key (`- gitea: acme/tool`), and it names the forge's source status. Unique, and not one of `registry`, `heatmap`, `ideas`, `docker`, `probes`, `notes`, `fdroid` |
 | `forges[].type` | string | required | `gitea`, `forgejo` (the same API) or `github`. The page names the forge by it (Gitea, Forgejo, GitHub), or Codeberg for one on `codeberg.org` |
 | `forges[].url` | string | required for `gitea`; `https://api.github.com` for `github` | Gitea or Forgejo: the site address, such as `https://git.example.com` (ForgeMap adds `/api/v1`, so leave it off). GitHub: the API root. An `http://` or `https://` address with no user name or password (the token goes in `token`). GitHub Enterprise Server is not supported yet: ForgeMap sends GraphQL to `<url>/graphql`, which it serves elsewhere |
-| `forges[].token` | string | none | A read-only token (see [Tokens and scopes](https://github.com/Will-Luck/forgemap/wiki/Installation#tokens-and-scopes)). **Gitea and Forgejo** need one: without it their API answers 401 and the forge's source shows as failing. **GitHub** runs without one but lists nothing: only repos the projects file names are read, and only lightly (the repo, its open issues when it has some, and its latest release; 60 requests an hour). Its source stays OK, and says why when that leaves `owners` unlisted or nothing to read. A `${VAR}` here that is empty or not set is warned of at start |
+| `forges[].token` | string | none | A read-only token (see [Tokens and scopes](https://github.com/Will-Luck/forgemap/wiki/Installation#tokens-and-scopes)). **Gitea and Forgejo** need one: without it their API answers 401 and the forge's source shows as failing. **GitHub** runs without one but lists nothing: only repos the projects file names are read, and only lightly (the repo, its open issues when it has some, and its latest release; 60 requests an hour). Its source stays OK, and says why when that leaves `owners` unlisted or nothing to read. Set up in the browser, a GitHub forge added with the token left empty works the same way; **Add a token** on its page later tests one and starts the listing. A `${VAR}` here that is empty or not set is warned of at start |
 | `forges[].owners` | list of strings | `[]` | The users and orgs whose repos are tracked; each repo becomes a project unless the projects file claims or hides it. Empty means the token user's own repos only, on every forge type: not repos the user collaborates on, and not its organisations' repos. List an org or another user to track theirs (and list yourself too, to keep your own); Gitea and Forgejo read each owner's own list, as GitHub does, so this is any user or org, not only one the token user belongs to (an org is read from its own list when the token has the read:organization scope, and from the same list as a user when it does not). An owner with no repos the token can see, or no such owner, is logged once. A Gitea or Forgejo list longer than 40 pages (2,000 repos) stops there, and the forge's status says so. A repo the projects file names is read even when its owner is not listed |
 | `forges[].heatmap` | bool | `true` | Add the token user's contribution days to the ship log's year of commits: Gitea's heatmap, or GitHub's contribution calendar (needs a token). It counts all of that user's activity, private repos included, whatever `include_private` says: a number per day, no repo names. Turn it off for a forge that mirrors another, or mirrored commits count twice |
 | `forges[].forks` | bool | `false` | Track repos that are forks. Off, a fork is tracked only when the projects file names it in a project's `repos:`, so forks made to send one change do not fill the page |
@@ -377,7 +466,7 @@ good copy and says why in the source status.
 
 | Key | Type | Default | What it does |
 |---|---|---|---|
-| `ideas.labels` | list of strings | `[idea, enhancement]` | Open issues carrying one of these labels (any case) in a project's own repos become ideas. A mirror's issues never do |
+| `ideas.labels` | list of strings | `[idea, enhancement]` | Open issues carrying one of these labels (any case) in a project's own repos become ideas. A mirror's issues never do. Only each repo's 10 most recent open issues are looked at, as before, though the issues page lists up to 50 |
 | `ideas.file` | string | none | Path of an optional [ideas file](#the-ideas-file) |
 | `ideas.forge` | string | none | Or read the ideas file through this forge id |
 | `ideas.repo` | string | none | `owner/name` of the repo holding it |
@@ -392,8 +481,8 @@ ideas:
 ```
 
 Quote the marker: an unquoted value that ends in `:` is read as a mapping
-and the file fails to load. Label ideas come from each repo's 10 newest open
-issues, the ones ForgeMap already reads. Finding filed ideas on GitHub needs a
+and the file fails to load. Label ideas come from issues ForgeMap reads
+anyway, so they cost no extra request. Finding filed ideas on GitHub needs a
 token (it uses the issue search).
 
 ### needs_you
@@ -403,7 +492,7 @@ stale PRs, Confirm) are always on; see [Needs you](https://github.com/Will-Luck/
 
 | Key | Type | Default | What it does |
 |---|---|---|---|
-| `needs_you.labels` | list of strings | `[needs-you, decision]` | An open issue or PR with one of these labels (any case) is a **Decide** item. Mirror issues count too |
+| `needs_you.labels` | list of strings | `[needs-you, decision]` | An open issue or PR with one of these labels (any case) is a **Decide** item. Mirror issues count too. Only each repo's 10 most recent open issues and 10 most recent open PRs are looked at, as before, though the issues page lists up to 50 of each |
 | `needs_you.assigned` | bool | `true` | An open issue or PR in a primary repo assigned to the token user is a **Decide** item. Turn it off when one account owns everything |
 | `needs_you.review_requests` | bool | `true` | An open PR in a primary repo that asks for the token user's review is a **Review** item |
 

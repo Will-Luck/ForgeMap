@@ -498,10 +498,10 @@ func BuildProject(env Env, in Input) Built {
 			continue
 		}
 		for _, is := range rd.Detail.Issues {
-			gi = append(gi, issueInfo(is, primaryForge, p.Forge))
+			gi = append(gi, issueInfo(is, primaryForge, p.Forge, rd.Repo.FullName))
 		}
 		for _, is := range rd.Detail.PRs {
-			prs = append(prs, issueInfo(is, primaryForge, p.Forge))
+			prs = append(prs, issueInfo(is, primaryForge, p.Forge, rd.Repo.FullName))
 		}
 	}
 	sortIssues(gi)
@@ -511,7 +511,7 @@ func BuildProject(env Env, in Input) Built {
 	if m := in.Mirror; m != nil {
 		var mi []model.IssueInfo
 		for _, is := range m.Issues {
-			ii := issueInfo(is, mirrorForge, mirrorName)
+			ii := issueInfo(is, mirrorForge, mirrorName, m.FullName)
 			ii.Mirror = true
 			mi = append(mi, ii)
 		}
@@ -519,6 +519,46 @@ func BuildProject(env Env, in Input) Built {
 		gi = append(gi, capN(mi, 10)...)
 	}
 	p.Issues, p.PRs = gi, prs
+
+	// The issues page's lists: the long lists of the full repos merged, then
+	// the mirror's, each newest updated first, with no cap.
+	var ia, pa []model.IssueInfo
+	for _, rd := range in.Repos {
+		if rd.Detail == nil {
+			continue
+		}
+		for _, is := range rd.Detail.AllIssues {
+			ia = append(ia, issueInfo(is, primaryForge, p.Forge, rd.Repo.FullName))
+		}
+		for _, is := range rd.Detail.AllPRs {
+			pa = append(pa, issueInfo(is, primaryForge, p.Forge, rd.Repo.FullName))
+		}
+	}
+	sortIssues(ia)
+	sortIssues(pa)
+	if m := in.Mirror; m != nil {
+		var mi []model.IssueInfo
+		for _, is := range m.AllIssues {
+			ii := issueInfo(is, mirrorForge, mirrorName, m.FullName)
+			ii.Mirror = true
+			mi = append(mi, ii)
+		}
+		sortIssues(mi)
+		ia = append(ia, mi...)
+	}
+	p.IssuesAll, p.PRsAll = ia, pa
+	// One link per repo on the issues page needs each primary repo's page and
+	// its own counts, counted as RepoInfo counts them.
+	if len(in.Repos) > 1 {
+		for _, rd := range in.Repos {
+			counted := rd.Repo
+			if rd.Detail != nil {
+				counted = rd.Detail.Repo
+			}
+			p.IssueRepos = append(p.IssueRepos, model.IssueRepo{FullName: rd.Repo.FullName, HTMLURL: rd.Repo.HTMLURL,
+				OpenIssues: counted.OpenIssues, OpenPRs: counted.OpenPRs})
+		}
+	}
 
 	// Recent commits.
 	for i, c := range commits {
@@ -674,10 +714,11 @@ func tagDate(tg forge.Tag, rels map[string]forge.Release) time.Time {
 	return tg.Commit.Created.Time
 }
 
-// issueInfo is an issue or PR read from forge id, which the page calls name.
-func issueInfo(is forge.Issue, id, name string) model.IssueInfo {
+// issueInfo is an issue or PR of repo (owner/name) read from forge id, which
+// the page calls name.
+func issueInfo(is forge.Issue, id, name, repo string) model.IssueInfo {
 	ii := model.IssueInfo{Number: is.Number, Title: is.Title, URL: is.HTMLURL, Author: is.User.Login, Comments: is.Comments,
-		CreatedAt: is.CreatedAt.Time, UpdatedAt: is.UpdatedAt.Time, Source: id, Forge: name}
+		CreatedAt: is.CreatedAt.Time, UpdatedAt: is.UpdatedAt.Time, Source: id, Forge: name, Repo: repo, Draft: is.Draft}
 	for _, l := range is.Labels {
 		ii.Labels = append(ii.Labels, model.Label{Name: l.Name, Color: strings.TrimPrefix(l.Color, "#")})
 	}
@@ -1294,22 +1335,8 @@ func normalizeProject(p *model.Project) {
 	if p.Plans == nil {
 		p.Plans = []model.PlanInfo{}
 	}
-	if p.Issues == nil {
-		p.Issues = []model.IssueInfo{}
-	}
-	for i := range p.Issues {
-		if p.Issues[i].Labels == nil {
-			p.Issues[i].Labels = []model.Label{}
-		}
-	}
-	if p.PRs == nil {
-		p.PRs = []model.IssueInfo{}
-	}
-	for i := range p.PRs {
-		if p.PRs[i].Labels == nil {
-			p.PRs[i].Labels = []model.Label{}
-		}
-	}
+	p.Issues, p.PRs = arrayIssues(p.Issues), arrayIssues(p.PRs)
+	p.IssuesAll, p.PRsAll = arrayIssues(p.IssuesAll), arrayIssues(p.PRsAll)
 	if p.CI == nil {
 		p.CI = []model.CIRun{}
 	}
@@ -1337,4 +1364,18 @@ func normalizeProject(p *model.Project) {
 	if p.Unreleased != nil && p.Unreleased.Items == nil {
 		p.Unreleased.Items = []string{}
 	}
+}
+
+// arrayIssues is is, never nil, with every item's Labels never nil, so JSON
+// has arrays.
+func arrayIssues(is []model.IssueInfo) []model.IssueInfo {
+	if is == nil {
+		is = []model.IssueInfo{}
+	}
+	for i := range is {
+		if is[i].Labels == nil {
+			is[i].Labels = []model.Label{}
+		}
+	}
+	return is
 }

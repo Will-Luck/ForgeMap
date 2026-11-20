@@ -216,6 +216,22 @@ func ResolvePath(getenv func(string) string, exists func(string) bool) (string, 
 	return "", nil
 }
 
+// Leftovers is what ResolvePath still finds once FORGEMAP_CONFIG is gone,
+// in its order: each of /config/forgemap.yml and /config/waymark.yml that
+// exists, and WAYMARK_CONFIG when it is set. With any one of them left, a
+// start reads that file or stops at it; with none, it reads no file.
+func Leftovers(getenv func(string) string, exists func(string) bool) (files, vars []string) {
+	for _, p := range []string{defaultConfigPath, oldConfigPath} {
+		if exists(p) {
+			files = append(files, p)
+		}
+	}
+	if strings.TrimSpace(getenv("WAYMARK_CONFIG")) != "" {
+		vars = append(vars, "WAYMARK_CONFIG")
+	}
+	return files, vars
+}
+
 // OldVariables warns of each WAYMARK_ variable set in environ (KEY=value,
 // as os.Environ gives them): 0.2.x read them and ForgeMap does not. A
 // warning names the variable and its FORGEMAP_ form, never its value.

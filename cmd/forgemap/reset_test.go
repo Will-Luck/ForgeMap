@@ -1,6 +1,7 @@
 package main
 
 import (
+	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -15,30 +16,65 @@ import (
 )
 
 // -reset-password refuses where there is no account to reset, and writes
-// nothing there.
+// nothing there. A data dir moved with -import-config whose account is not
+// made yet is told to make it with the setup code, and how to get a new code.
 func TestResetPasswordRefusesWithoutAnAccount(t *testing.T) {
 	noHostConfig(t)
 	file := filepath.Join(t.TempDir(), "forgemap.yml")
 	if err := os.WriteFile(file, nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
+	moved := func(t *testing.T, dir string) {
+		_, hash := auth.NewSetupCode()
+		if err := settings.Create(dir, settings.File{SetupCode: hash}); err != nil {
+			t.Fatal(err)
+		}
+	}
 	for _, tc := range []struct {
 		name, args string
 		env        []string
+		prep       func(*testing.T, string)
 		want       string
 	}{
-		{"fresh data dir", "-reset-password", nil, "no account yet"},
-		{"config file", "-reset-password", []string{"FORGEMAP_CONFIG=" + file}, "config file"},
-		{"quick start", "-reset-password", []string{"GITHUB_TOKEN=x"}, "quick-start"},
-		{"with -demo", "-reset-password -demo", nil, "works alone"},
+		{"fresh data dir", "-reset-password", nil, nil, "reset-password: there is no account yet: open the page and set one up"},
+		{"moved, no account yet", "-reset-password", nil, moved, "reset-password: this install was moved with -import-config and has no account yet: " +
+			"make it in the page with the setup code (lost it? put the config back, delete settings.json and run forgemap -import-config again)"},
+		{"config file", "-reset-password", []string{"FORGEMAP_CONFIG=" + file}, nil, "config file"},
+		{"quick start", "-reset-password", []string{"GITHUB_TOKEN=x"}, nil, "quick-start"},
+		{"with -demo", "-reset-password -demo", nil, nil, "works alone"},
+		{"with -import-config", "-reset-password -import-config", nil, nil, "works alone"},
+		{"after -import-config", "-import-config -reset-password", nil, nil, "works alone"},
 	} {
 		dir := t.TempDir()
+		if tc.prep != nil {
+			tc.prep(t, dir)
+		}
+		before := folder(t, dir)
 		out, errOut, code := forgemap(t, tc.args, append(tc.env, "DATA_DIR="+dir)...)
-		left, _ := os.ReadDir(dir)
-		if code != 1 || out != "" || len(left) != 0 || !strings.Contains(errOut, tc.want) {
-			t.Errorf("%s: exit %d, stdout %q, %d files written, log:\n%s", tc.name, code, out, len(left), errOut)
+		after := folder(t, dir)
+		if code != 1 || out != "" || !maps.Equal(after, before) || !strings.Contains(errOut, tc.want) {
+			t.Errorf("%s: exit %d, stdout %q, folder %d files before, %d after (changed: %t), log:\n%s",
+				tc.name, code, out, len(before), len(after), !maps.Equal(after, before), errOut)
 		}
 	}
+}
+
+// folder is every file in dir by name, with its bytes.
+func folder(t *testing.T, dir string) map[string]string {
+	t.Helper()
+	es, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := map[string]string{}
+	for _, e := range es {
+		b, err := os.ReadFile(filepath.Join(dir, e.Name()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		m[e.Name()] = string(b)
+	}
+	return m
 }
 
 // -reset-password sets a random password and both new secrets, and prints

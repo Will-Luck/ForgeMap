@@ -193,7 +193,7 @@ func TestNoSecretInAnyResponse(t *testing.T) {
 		}
 	}
 	for _, p := range []string{"/", "/setup", "/signin", "/settings", "/settings/forges/new", "/settings/forges/gitea",
-		"/ideas", "/ships", "/map", "/p/beacon", "/api/site.json", "/api/live.json", "/api/search.json", "/api/p/beacon.json",
+		"/ideas", "/ships", "/ships?days=30", "/issues", "/map", "/p/beacon", "/api/site.json", "/api/live.json", "/api/search.json", "/api/p/beacon.json",
 		"/feed.atom", "/healthz", "/fragments/overview-head", "/nope"} {
 		leak("GET "+p+" signed in", e.do("GET", p, nil, true, nil))
 		leak("GET "+p+" signed out", e.do("GET", p, nil, false, nil))

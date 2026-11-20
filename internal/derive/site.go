@@ -6,7 +6,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/Will-Luck/forgemap/internal/forge"
 	"github.com/Will-Luck/forgemap/internal/model"
@@ -257,12 +256,7 @@ func Assemble(in SiteInput) SiteOutput {
 	}
 	SortActions(site.NeedsYou)
 	st.NeedsYou = len(site.NeedsYou)
-	month := now.Add(-30 * 24 * time.Hour)
-	for _, r := range site.Releases {
-		if r.Date.After(month) {
-			st.ReleasesLast30d++
-		}
-	}
+	st.ReleasesLast30d = len(site.ShippedReleases(now))
 	site.Stats = st
 	out.Site = site
 	return out

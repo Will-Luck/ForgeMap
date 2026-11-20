@@ -41,6 +41,7 @@ The header has four tabs: **Overview**, **Ideas**, **Ship log** and **Map**.
 |---|---|---|
 | [Overview](#overview) | Tab | What is going on? |
 | [Needs you](#needs-you) | On the Overview | What do I need to do? |
+| [Open issues](#open-issues) | The Overview's Open issues tile | What is open, and where? |
 | [Project page](#project-page) | Open any project | Is it deployed and healthy? |
 | [Ideas](#ideas) | Tab | What could we do next? |
 | [Ship log](#ship-log) | Tab | What have we shipped? |
@@ -71,6 +72,16 @@ notes. On a forge, "you" is the token's user: to add a card, label an issue
 
 ![Needs you cards: Fix a probe that answers HTTP 503 and a stopped container, Review two pull requests, Deploy Beacon v2.4.0, Confirm a parked project, and Decide two issues](docs/images/tour-needs-you.png)
 
+### Open issues
+
+**Every open issue and pull request** the page holds, by project: the
+Overview's **Open issues** tile opens it, and so does **Open issues** in
+the search palette. A busy repo shows up to 50 of its issues and 50 of its
+pull requests, listed newest updated first, and links to the rest on its
+forge. On Gitea and Forgejo, and on a GitHub mirror or a GitHub forge with
+no token, the issues are taken from the newest opened, not the newest
+updated. A GitHub forge with no token lists no pull requests.
+
 ### Project page
 
 **Everything about one project:** is it deployed, is it healthy, what is
@@ -100,7 +111,9 @@ ideas set up, the page stays hidden.
 ### Ship log
 
 **A year of commits per day**, your busiest day and current streak, then
-every release of the last 18 months, by month.
+every release of the last 18 months, by month. **Last 30 days** beside the
+releases, or the Overview's **Shipped in 30 days** tile, shows only the
+releases that tile counts.
 
 ![The ship log: 966 commits in 53 weeks, a heatmap of commits per day and the first release in the timeline](docs/images/tour-ships.png)
 
@@ -117,7 +130,10 @@ Press **Ctrl K** (Cmd K on a Mac, or **/**) and type a few letters to jump to
 any project, idea or issue.
 
 It also runs commands: **Refresh now** (unless `refresh: false` turns it
-off), **Toggle theme** and **Surprise me**.
+off), **Toggle theme** and **Surprise me**, and opens **Open issues**. On
+an install set up with a config file or variables, typing **settings**
+finds **Settings (off on this install)**, a link to how to move it to
+Settings.
 
 ![The search palette with bea typed: two matching projects and four ideas, with keyboard hints in the footer](docs/images/tour-search.png)
 
@@ -133,7 +149,8 @@ button. Every page also fits a **phone**.
 ### Setup and Settings
 
 **Set up in the browser:** make your account in the first 5 minutes after
-the start and connect a forge.
+the start and connect a forge. A GitHub forge can go without a token: it
+then reads only the public repos your projects file names.
 
 ![Setup step 2: a Gitea forge connected as mark, with its owners ticked and its certificate trusted](docs/images/tour-setup.png)
 
@@ -187,7 +204,7 @@ anyone who can open the page can make the account: do not publish the port
 before it exists. Forgot the password?
 `docker exec forgemap forgemap -reset-password`.
 
-Or set it with variables or a file (no sign-in):
+Or set it with variables or a file (no sign-in and no Settings page):
 
 **GitHub only:** give it a read-only token and the owners to track, and each
 of their public repos becomes a project (forks too, with
@@ -261,6 +278,14 @@ docker run -d --name forgemap --restart unless-stopped \
 ```
 
 </details>
+
+Started from variables or a file, and want sign-in and Settings?
+`docker exec forgemap forgemap -import-config` moves the install over with
+its tokens and history: see [Moving to Settings](https://github.com/Will-Luck/forgemap/blob/main/docs/configuration.md#moving-to-settings).
+Its step 2 runs the container again, with the same data volume and without
+the config or the quick-start variables `GITEA_URL`, `GITEA_TOKEN`,
+`GITHUB_TOKEN` and `GITHUB_OWNERS`, since any one left makes the next start
+a quick start again. `docker restart` is not enough: it keeps them.
 
 Token scopes, private repos, Docker options, images and binaries are in the
 [install guide](https://github.com/Will-Luck/forgemap/wiki/Installation).

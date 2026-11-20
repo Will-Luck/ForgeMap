@@ -50,7 +50,7 @@
   <div class="field">
     <label for="token">Read-only token</label>
     <input type="password" class="input mono" id="token" autocomplete="off" spellcheck="false"{{with index $e "token"}} aria-invalid="true"{{end}} aria-describedby="hint-token{{with index $e "token"}} err-token{{end}}" name="token" value="">
-    <p class="field-hint" id="hint-token">Read-only is enough. The <a href="https://github.com/Will-Luck/forgemap/wiki/Installation">Installation guide</a> lists the boxes to tick.</p>
+    <p class="field-hint" id="hint-token">Read-only is enough. The <a href="https://github.com/Will-Luck/forgemap/wiki/Installation">Installation guide</a> lists the boxes to tick.<br>GitHub: leave it empty to read public repos only.</p>
     {{template "fieldErr" (dict "Name" "token" "Msg" (index $e "token"))}}
   </div>
   {{template "certTick" (dict "C" .Form.Cert "Button" "Connect" "ID" "trust" "H2" .H2)}}

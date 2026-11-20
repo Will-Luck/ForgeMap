@@ -70,7 +70,7 @@ func TestNewTemplatesAreStyled(t *testing.T) {
 	css := readAsset(t, "static/css/app.css")
 	classRe, actionRe := regexp.MustCompile(`class="([^"]*)"`), regexp.MustCompile(`\{\{.*?\}\}`)
 	for _, p := range []string{"templates/bare.html", "templates/signin.html", "templates/denied.html", "templates/setup.html",
-		"templates/settings.html", "templates/forge.html", "templates/parts/forms.html"} {
+		"templates/settings.html", "templates/forge.html", "templates/parts/forms.html", "templates/issues.html"} {
 		for _, m := range classRe.FindAllStringSubmatch(readAsset(t, p), -1) {
 			for _, c := range strings.Fields(actionRe.ReplaceAllString(m[1], " ")) {
 				// Not \b: ".form-card" must not stand in for a missing ".form".
@@ -109,6 +109,20 @@ func TestBrandWordWrapsOnlyOnBarePages(t *testing.T) {
 	all, bare := strings.Count(css, ".brand-word"), strings.Count(css, ".bare .brand-word { overflow-wrap: anywhere; }")
 	if bare != 1 || all != bare {
 		t.Errorf("app.css has %d rules naming .brand-word, %d of them the bare layout's; want that one only", all, bare)
+	}
+}
+
+// An issues page row's repo name (class "meta mono") is the size of the row's
+// other details. .mono's size is in the utilities layer, which outranks
+// .meta's in components whatever the selector, so the pair needs a rule of
+// its own in utilities, at .meta's size.
+func TestRowRepoNameSizedAsItsRow(t *testing.T) {
+	css := readAsset(t, "static/css/app.css")
+	meta := regexp.MustCompile(`\n  \.meta \{[^}]*font-size: ([^;]+);`).FindStringSubmatch(css)
+	_, utilities, _ := strings.Cut(css, "@layer utilities {")
+	utilities, _, _ = strings.Cut(utilities, "\n}")
+	if meta == nil || !strings.Contains(utilities, ".meta.mono { font-size: "+meta[1]+"; }") {
+		t.Errorf("app.css's utilities layer has no .meta.mono rule at .meta's size (%v)", meta)
 	}
 }
 

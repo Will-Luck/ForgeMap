@@ -17,7 +17,7 @@ import (
 )
 
 var (
-	guardPages  = []string{"/", "/p/app", "/ideas?kind=quick-win", "/ships", "/map", "/nope"}
+	guardPages  = []string{"/", "/p/app", "/ideas?kind=quick-win", "/ships", "/ships?days=30", "/issues", "/map", "/nope"}
 	guardClosed = []string{"/api/site.json", "/api/p/app.json", "/api/search.json", "/api/live.json", "/feed.atom", "/p/app/card", "/p/app/live",
 		"/fragments/overview-head", "/events", "/dyn/000000000000/site.css"}
 )

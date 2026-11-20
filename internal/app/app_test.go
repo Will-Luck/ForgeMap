@@ -1528,16 +1528,41 @@ func TestIncludePrivateFalseHidesEverywhere(t *testing.T) {
 		}
 		return out
 	}
+	// listed is where the issues page's lists hold the private repo's issue
+	// or pull request.
+	listed := func(s *model.Site) []string {
+		var out []string
+		for _, p := range s.Projects {
+			for _, is := range append(append([]model.IssueInfo{}, p.IssuesAll...), p.PRsAll...) {
+				if is.Repo == "acme/secret" || is.Title == "Rotate the keys" || is.Title == "Swap the cipher" {
+					out = append(out, p.Slug+": "+is.Title)
+				}
+			}
+		}
+		return out
+	}
 	t.Run("included", func(t *testing.T) {
 		_, s := run(t, true, "")
 		if got := shownIn(s, "secret"); len(got) != 5 {
 			t.Errorf("with include_private the private repo shows in %v, want all five", got)
+		}
+		if got := listed(s); len(got) != 2 {
+			t.Errorf("with include_private the issues page's lists hold %v, want its issue and pull request", got)
+		}
+		if page := issuesPage(t, s); !strings.Contains(page, "Rotate the keys") || !strings.Contains(page, "Swap the cipher") {
+			t.Error("with include_private /issues does not show the private repo's issue and pull request")
 		}
 	})
 	t.Run("left out", func(t *testing.T) {
 		h, s := run(t, false, "")
 		if got := shownIn(s, "secret"); len(got) != 0 {
 			t.Errorf("the private repo shows in %v", got)
+		}
+		if got := listed(s); len(got) != 0 {
+			t.Errorf("the issues page's lists hold %v", got)
+		}
+		if page := issuesPage(t, s); strings.Contains(page, "Rotate the keys") || strings.Contains(page, "Swap the cipher") || strings.Contains(page, "acme/secret") {
+			t.Error("/issues shows the private repo")
 		}
 		if s.ProjectBySlug("tool") == nil {
 			t.Error("the public repo must stay")
@@ -1620,12 +1645,22 @@ func TestIncludePrivateFalseHidesEverywhere(t *testing.T) {
 						break
 					}
 				}
+				// The issues page's list is filled apart from the short one.
+				for _, is := range p.IssuesAll {
+					if is.Source == "github" {
+						shown = append(shown, "issues_all")
+						break
+					}
+				}
+				if strings.Contains(issuesPage(t, s), "Secret plan") {
+					shown = append(shown, "/issues")
+				}
 				for _, l := range p.Links {
 					if l.Kind == "github" {
 						shown = append(shown, "link "+l.URL)
 					}
 				}
-				if include && len(shown) != 3 || !include && len(shown) != 0 {
+				if include && len(shown) != 5 || !include && len(shown) != 0 {
 					t.Errorf("owners %v include_private %v: the private mirror shows %v", owners, include, shown)
 				}
 				if got := h.requests("github", "/repos/acme/tool/"); !include && len(got) != 0 {

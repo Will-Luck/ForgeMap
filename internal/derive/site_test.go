@@ -208,6 +208,30 @@ func TestAssemble(t *testing.T) {
 	}
 }
 
+// The Shipped in 30 days tile counts by the site's own rule
+// (model.Site.ShippedReleases), so the ship log's 30-day view lists the same
+// releases: a tag exactly 720 hours old is out, one a second younger is in.
+// Spec D2.
+func TestShippedCountIsTheSiteRule(t *testing.T) {
+	in := siteInput(t)
+	edge := testNow.Add(-model.ShippedWindow)
+	old := in.Projects[0].Repos[0].Detail // old-site's
+	old.Tags = append(old.Tags, tag("v1.1.0", edge.Format(time.RFC3339)), tag("v1.1.1", edge.Add(time.Second).Format(time.RFC3339)))
+	s := Assemble(in).Site
+	var got []string
+	for _, r := range s.ShippedReleases(time.Time{}) {
+		got = append(got, r.Project+" "+r.Tag)
+	}
+	if s.Stats.ReleasesLast30d != 3 || len(got) != 3 {
+		t.Errorf("tile %d, shipped %v: want 3 each (beacon's two and old-site v1.1.1)", s.Stats.ReleasesLast30d, got)
+	}
+	for _, g := range got {
+		if g == "old-site v1.1.0" {
+			t.Error("a release exactly 720 hours old is counted")
+		}
+	}
+}
+
 func hasWarning(ws []string, sub string) bool {
 	for _, w := range ws {
 		if strings.Contains(w, sub) {

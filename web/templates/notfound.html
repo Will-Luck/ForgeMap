@@ -3,6 +3,10 @@
   <span class="nf-ic">{{icon "compass"}}</span>
   {{if $v.Slug}}<h1 class="nf-h">No project called <span class="mono">{{$v.Slug}}</span>.</h1>
   {{else}}<h1 class="nf-h">Nothing lives at <span class="mono">{{$v.Path}}</span>.</h1>{{end}}
+  {{- with $v.MoveURL}}
+  <p class="lead">This install has no Settings page. It is set up from a config file or environment variables, so its settings are changed there.</p>
+  <p><a href="{{.}}">{{icon "external-link"}}How to move it to Settings</a></p>
+  {{- end}}
   <p class="nf-actions">
     <button type="button" class="btn accent" data-palette-open hidden data-js-show>{{icon "search"}}Search instead?</button>
     <a class="btn" href="/">{{icon "layout-dashboard"}}Back to the overview</a>

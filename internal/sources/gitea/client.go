@@ -447,26 +447,33 @@ func (c *Client) Releases(ctx context.Context, full string) ([]forge.Release, er
 	return out, nil
 }
 
-// OpenIssues returns up to 10 open issues (pull requests excluded).
-func (c *Client) OpenIssues(ctx context.Context, full string) ([]forge.Issue, error) {
-	var issues []forge.Issue
-	q := url.Values{"state": {"open"}, "type": {"issues"}, "limit": {"10"}}
-	if _, err := c.getJSON(ctx, repoPath(full)+"/issues", q, &issues); err != nil {
-		return nil, err
+// OpenIssues returns up to forge.AllMax open issues in the order Gitea lists
+// them, newest created first: it takes no sort. first is the issues among the
+// first 10 items listed, what asking for 10 gave. Pull requests are left out
+// of both, for a server that lists them despite type=issues.
+func (c *Client) OpenIssues(ctx context.Context, full string) (first, all []forge.Issue, err error) {
+	var listed []forge.Issue
+	q := url.Values{"state": {"open"}, "type": {"issues"}, "limit": {strconv.Itoa(forge.AllMax)}}
+	if _, err := c.getJSON(ctx, repoPath(full)+"/issues", q, &listed); err != nil {
+		return nil, nil, err
 	}
-	out := issues[:0]
-	for _, i := range issues {
-		if !i.IsPull() {
-			out = append(out, i)
+	for n, i := range listed {
+		if i.IsPull() {
+			continue
 		}
+		if n < 10 {
+			first = append(first, i)
+		}
+		all = append(all, i)
 	}
-	return out, nil
+	return first, all, nil
 }
 
-// OpenPulls returns up to 10 open pull requests, most recently updated first.
+// OpenPulls returns up to forge.AllMax open pull requests, most recently
+// updated first.
 func (c *Client) OpenPulls(ctx context.Context, full string) ([]forge.Issue, error) {
 	var prs []forge.Issue
-	q := url.Values{"state": {"open"}, "limit": {"10"}, "sort": {"recentupdate"}}
+	q := url.Values{"state": {"open"}, "limit": {strconv.Itoa(forge.AllMax)}, "sort": {"recentupdate"}}
 	_, err := c.getJSON(ctx, repoPath(full)+"/pulls", q, &prs)
 	return prs, err
 }

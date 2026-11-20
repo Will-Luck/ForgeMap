@@ -3,6 +3,7 @@ package gitea
 import (
 	"context"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/Will-Luck/forgemap/internal/forge"
@@ -26,16 +27,18 @@ func (c *Client) FetchDetail(ctx context.Context, repo forge.Repo, since time.Ti
 		}
 	}
 	if repo.OpenIssues > 0 {
-		if d.Issues, err = c.OpenIssues(ctx, full); err != nil {
+		first, is, err := c.OpenIssues(ctx, full)
+		if err != nil {
 			return nil, wrap("issues", err)
 		}
-		d.Issues = forge.SortByUpdated(d.Issues)
+		d.Issues, d.AllIssues = firstTen(first), forge.NewestAll(is)
 	}
 	if repo.OpenPRs > 0 {
-		if d.PRs, err = c.OpenPulls(ctx, full); err != nil {
+		prs, err := c.OpenPulls(ctx, full)
+		if err != nil {
 			return nil, wrap("pulls", err)
 		}
-		d.PRs = forge.SortByUpdated(d.PRs)
+		d.PRs, d.AllPRs = firstTen(prs), forge.NewestAll(prs)
 	}
 	if !repo.Empty {
 		if d.Commits, d.CommitsCapped, err = c.Commits(ctx, full, repo.DefaultBranch, since, maxCommitPages); err != nil {
@@ -69,11 +72,11 @@ func (c *Client) FetchMirror(ctx context.Context, full string, now time.Time) (*
 	}
 	m := &forge.Mirror{Forge: c.id, FullName: r.FullName, HTMLURL: r.HTMLURL, Private: r.Private, Stars: r.Stars, OpenIssues: r.OpenIssues, FetchedAt: now.UTC()}
 	if r.OpenIssues > 0 {
-		is, err := c.OpenIssues(ctx, full)
+		first, is, err := c.OpenIssues(ctx, full)
 		if err != nil {
 			return nil, fmt.Errorf("%s issues: %w", full, err)
 		}
-		m.Issues = forge.SortByUpdated(is)
+		m.Issues, m.AllIssues = firstTen(first), forge.NewestAll(is)
 	}
 	rels, err := c.Releases(ctx, full)
 	if err != nil {
@@ -83,4 +86,10 @@ func (c *Client) FetchMirror(ctx context.Context, full string, now time.Time) (*
 		m.LatestRelease = rels[0].TagName
 	}
 	return m, nil
+}
+
+// firstTen is the list as it was when Gitea was asked for 10: the first 10
+// items in the order it lists them, newest updated first. is keeps its order.
+func firstTen(is []forge.Issue) []forge.Issue {
+	return forge.SortByUpdated(slices.Clone(is[:min(len(is), 10)]))
 }

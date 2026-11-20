@@ -29,9 +29,9 @@ type Manager interface {
 	Settings() Settings        // the view model of Settings and of setup steps 2 and 3
 	SaveMain(f MainForm) error // validates and saves the main form, and applies it live
 
-	ForgeDetail(ctx context.Context, id string, recheck bool) (ForgeView, error) // one forge's edit form; recheck reads the forge afresh ("Check again")
-	ConnectForge(ctx context.Context, f ForgeForm) (id string, err error)        // tests f, saves only on a pass; the generated id
-	ReplaceToken(ctx context.Context, id string, f ForgeForm) error              // tests forge id with f's token (and address, when given), saves only on a pass
+	ForgeDetail(ctx context.Context, id string, recheck bool) (ForgeView, error) // one forge's edit form; recheck reads the forge afresh ("Check again"); a GitHub forge with no token is never read
+	ConnectForge(ctx context.Context, f ForgeForm) (id string, err error)        // tests f, saves only on a pass (GitHub with no token: saved untested, nothing read); the generated id
+	ReplaceToken(ctx context.Context, id string, f ForgeForm) error              // tests forge id with f's token (and address, when given; never on GitHub), saves only on a pass
 	SaveForge(id string, f ForgeOptions) error                                   // saves a forge's owners and switches
 	RemoveForge(id string) error                                                 // removes a forge
 	TrustForge(ctx context.Context, id, pin string) error                        // reads forge id with its saved token through a client pinned to pin; saves the pin only on a pass
@@ -43,6 +43,7 @@ type Status struct { // the install's state, as the guard needs it
 	SetupDone    bool          // setup is finished
 	SignInToView bool          // viewing the pages needs the session
 	SetupLeft    time.Duration // while there is no account: how long setup stays open; 0 once the window has closed, and always once an account exists
+	SetupCode    bool          // while there is no account: step 1 asks for the setup code forgemap -import-config printed
 }
 type Viewer struct { // what a request carries
 	Session bool // a valid session cookie: the signed-in owner
@@ -82,8 +83,8 @@ var (
 	ErrNotWrittenBack = errors.New("the new settings could not start, and the previous ones were not written back") // the file holds the new settings
 )
 
-type AccountForm struct{ Username, Password, Confirm string } // setup step 1
-type SignInForm struct {                                      // the sign-in form
+type AccountForm struct{ Username, Password, Confirm, Code string } // setup step 1; Code is the setup code as typed, "" where step 1 asks for none
+type SignInForm struct {                                            // the sign-in form
 	Username, Password string
 	Keep               bool   // keep me signed in
 	Once               string // the one-time token of -reset-password's link, from the form's hidden field; "" for none
@@ -126,8 +127,9 @@ type ForgeRow struct { // one connected forge
 	ID      string // its name in a projects file, and the {id} of its routes
 	Type    string // gitea, forgejo or github
 	Name    string // as the page names it: Gitea, GitHub, Codeberg
-	Address string // "" for github
+	Address string // the address its token is sent to; "" for GitHub at its standard address
 	Trusted string // the SHA-256 of the certificate the owner trusted, lower-case hex; "" while the normal check applies
+	NoToken bool   // a GitHub forge saved with no token: it reads only the public repos a projects file names
 }
 type ForgeView struct { // a forge's edit form
 	ForgeRow

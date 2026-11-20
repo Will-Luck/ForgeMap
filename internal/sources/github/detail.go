@@ -67,6 +67,7 @@ func (c *Client) FetchDetail(ctx context.Context, repo forge.Repo, since time.Ti
 			d.Repo.OpenIssues = len(issues)
 		}
 		d.Issues, d.PRs = forge.SortByUpdated(issues), forge.SortByUpdated(prs)
+		d.AllIssues, d.AllPRs = forge.NewestAll(issues), forge.NewestAll(prs)
 	}
 	if !repo.Empty {
 		if d.Commits, d.CommitsCapped, err = c.Commits(ctx, full, repo.DefaultBranch, since, maxCommitPages); err != nil {

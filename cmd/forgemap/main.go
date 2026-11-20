@@ -36,8 +36,14 @@ var version = "dev"
 var hashRounds = auth.Rounds
 
 // freshHint is the line added when a start with no config file and no forge
-// variable finds a data dir that is already in use.
-const freshHint = "to set up in the browser, start with an empty data volume"
+// variable finds a data dir that is already in use. Emptying the folder loses
+// its history, which -import-config keeps.
+const freshHint = "to set up in the browser, start with an empty data volume; to keep this folder's history, put the config back and run forgemap -import-config"
+
+// importHint is logged once when a config-file or quick-start install is
+// about to serve and its data folder holds no settings.json; with one, the
+// "is not read" line says enough.
+const importHint = "config: no Settings page on this install; forgemap -import-config moves it to Settings"
 
 func main() {
 	fixture := flag.String("fixture", "", "serve a fixed Site JSON file (no network)")
@@ -46,9 +52,20 @@ func main() {
 	demoMode := flag.Bool("demo", false, "serve an invented team's projects from a built-in fake forge (no config, no network)")
 	showVersion := flag.Bool("version", false, "print the version and exit")
 	resetPassword := flag.Bool("reset-password", false, "set a new random password for the account of an install set up in the browser, print it and a one-time sign-in link, and exit")
+	importConfig := flag.Bool("import-config", false, "move a config-file or quick-start install to Settings: copy its forges, tokens and page settings into settings.json, print a one-time setup code and the next steps, and exit")
 	flag.Parse()
 	if *showVersion {
 		fmt.Println("forgemap " + version)
+		return
+	}
+	// Before -reset-password, so the two together are refused in either order.
+	if *importConfig {
+		if *demoMode || *fixture != "" || *dump != "" || *resetPassword {
+			log.Fatal("-import-config works alone: not with -demo, -fixture, -dump or -reset-password")
+		}
+		if err := runImportConfig(os.Getenv, os.Stdout); err != nil {
+			log.Fatal(err)
+		}
 		return
 	}
 	if *resetPassword {
@@ -206,6 +223,9 @@ func main() {
 			log.Fatal(err)
 		}
 		src = a
+		// Served from a config file or the quick-start variables (demo
+		// shares this case; -fixture and -dump never reach it).
+		opts.FileInstall = !*demoMode
 		go func() {
 			defer close(runDone)
 			if err := a.Run(ctx); err != nil {
@@ -241,6 +261,10 @@ func main() {
 	addr := *listen
 	if st != nil {
 		addr = ln.Addr().String()
+	}
+	// Only once the port is bound: a start that fails says nothing of it.
+	if opts.FileInstall && !config.FileExists(filepath.Join(cfg.DataDir, settings.FileName)) {
+		log.Print(importHint)
 	}
 	log.Printf("ForgeMap %s listening on %s (%s)", version, addr, mode)
 	if err := srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {

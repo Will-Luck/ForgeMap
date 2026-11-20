@@ -32,6 +32,9 @@ type Mirror struct {
 	Issues                   []Issue // newest updated first, max 10, PRs excluded
 	LatestRelease            string
 	FetchedAt                time.Time
+	// AllIssues comes from the same read as Issues, kept longer: newest
+	// updated first, max AllMax, PRs excluded. Only the issues page reads it.
+	AllIssues []Issue
 }
 
 // ListCapped is the error a ListRepos returns beside the repos it read when

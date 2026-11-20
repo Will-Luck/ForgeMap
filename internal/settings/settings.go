@@ -38,6 +38,9 @@ var ErrUsed = errors.New("settings: the data dir is in use and has no settings.j
 // is of a newer format.
 var ErrUnreadable = errors.New("settings: settings.json cannot be used")
 
+// ErrExists is Create's refusal: the data dir already has a settings.json.
+var ErrExists = errors.New("settings: settings.json is already there")
+
 // usedNames are internal/app's files in the data dir: any one of them, or a
 // name that starts with one, with no settings.json, means another kind of
 // install has used the dir.
@@ -55,6 +58,10 @@ type File struct {
 	SignIn        bool           `json:"sign_in"` // viewing the pages needs the session
 	Config        config.Managed `json:"config"`
 	Once          *Once          `json:"once,omitempty"` // -reset-password's one-time sign-in link; nil when there is none
+	// SetupCode is the SHA-256 of the setup code forgemap -import-config
+	// printed (the code itself is never stored): while it is set, making
+	// the account needs the code, and making it removes this. Nil for none.
+	SetupCode []byte `json:"setup_code,omitempty"`
 }
 
 // Once is the one-time sign-in link -reset-password prints: the SHA-256 of
@@ -141,23 +148,11 @@ func (s *Store) Get() File {
 func (s *Store) Update(change func(*File) error) (File, error) {
 	s.saveMu.Lock()
 	defer s.saveMu.Unlock()
-	if err := os.MkdirAll(s.dir, 0o755); err != nil {
-		return File{}, fmt.Errorf("settings: data dir: %w", err)
-	}
-	lock, err := os.OpenFile(filepath.Join(s.dir, lockName), os.O_RDWR|os.O_CREATE, 0o600)
+	lock, err := s.lock()
 	if err != nil {
-		return File{}, fmt.Errorf("settings: %w", err)
+		return File{}, err
 	}
 	defer lock.Close() // closing the file frees the flock
-	for {
-		err = syscall.Flock(int(lock.Fd()), syscall.LOCK_EX)
-		if !errors.Is(err, syscall.EINTR) {
-			break
-		}
-	}
-	if err != nil {
-		return File{}, fmt.Errorf("settings: lock %s: %w", lock.Name(), err)
-	}
 
 	// Start from the file on disk, read again inside the lock: it may be
 	// newer than memory, or an older copy put back by hand.
@@ -196,6 +191,58 @@ func (s *Store) Update(change func(*File) error) (File, error) {
 	s.file, s.sum, s.seen = f, sha256.Sum256(b), f.Revision
 	s.mu.Unlock()
 	return f, nil
+}
+
+// lock makes the data dir when it is missing, opens settings.lock and takes
+// its flock, waiting for any other holder. Closing the file it gives frees
+// the flock.
+func (s *Store) lock() (*os.File, error) {
+	if err := os.MkdirAll(s.dir, 0o755); err != nil {
+		return nil, fmt.Errorf("settings: data dir: %w", err)
+	}
+	lock, err := os.OpenFile(filepath.Join(s.dir, lockName), os.O_RDWR|os.O_CREATE, 0o600)
+	if err != nil {
+		return nil, fmt.Errorf("settings: %w", err)
+	}
+	for {
+		err = syscall.Flock(int(lock.Fd()), syscall.LOCK_EX)
+		if !errors.Is(err, syscall.EINTR) {
+			break
+		}
+	}
+	if err != nil {
+		lock.Close()
+		return nil, fmt.Errorf("settings: lock %s: %w", lock.Name(), err)
+	}
+	return lock, nil
+}
+
+// Create writes f as dir's first settings.json, whatever else dir holds:
+// forgemap -import-config writes into the data dir of a config-file
+// install, which Open calls in use. Under the lock on settings.lock it
+// refuses with ErrExists when a settings.json is there, readable or not,
+// and writes nothing; otherwise it writes f at revision 1, whole, at mode
+// 0600 through a temp file and a rename, as Update does. It makes dir when
+// it is missing. Open and its in-use rule do not change.
+func Create(dir string, f File) error {
+	s := &Store{dir: dir}
+	lock, err := s.lock()
+	if err != nil {
+		return err
+	}
+	defer lock.Close()
+	if _, err := os.Lstat(s.Path()); err == nil {
+		return fmt.Errorf("%w: %s", ErrExists, s.Path())
+	} else if !errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("settings: %w", err) // an os error names the path, never content
+	}
+	f.Format, f.Revision = Format, 1
+	b, err := json.MarshalIndent(f, "", "  ")
+	if err != nil {
+		return fmt.Errorf("settings: %s: encoding failed", s.Path())
+	}
+	s.removeTemps()
+	return s.write(append(b, '\n'))
 }
 
 // removeTemps removes the temp files a crashed save left in the data dir:

@@ -166,13 +166,15 @@ func mainForm(cfg config.Config, signIn bool) web.MainForm {
 }
 
 // forgeRows are cfg's forges as Settings lists them, named as the page names
-// them (the id added when two share a name, as the App does).
+// them (the id added when two share a name, as the App does). Each shows the
+// address its token is sent to, bar GitHub at its standard address: a GitHub
+// forge imported with an address of its own shows it as a Gitea forge does.
 func forgeRows(forges []config.Forge) []web.ForgeRow {
 	rows := make([]web.ForgeRow, len(forges))
 	count := map[string]int{}
 	for i, f := range forges {
-		rows[i] = web.ForgeRow{ID: f.ID, Type: f.Type, Name: derive.ForgeName(f.Type, f.URL), Trusted: f.Cert}
-		if f.Type != "github" {
+		rows[i] = web.ForgeRow{ID: f.ID, Type: f.Type, Name: derive.ForgeName(f.Type, f.URL), Trusted: f.Cert, NoToken: noToken(f)}
+		if !f.StandardGitHub() {
 			rows[i].Address = f.URL
 		}
 		count[rows[i].Name]++

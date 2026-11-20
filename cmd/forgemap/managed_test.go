@@ -52,15 +52,27 @@ func freePort(t *testing.T) string {
 // read of it stays on loopback.
 func fakeGitea(t *testing.T) string {
 	t.Helper()
+	at, _ := countedGitea(t)
+	return at
+}
+
+// countedGitea is fakeGitea, counting every request it answers.
+func countedGitea(t *testing.T) (string, *atomic.Int32) {
+	t.Helper()
 	w := demo.Dataset(time.Now())
 	w.Edit(func() {
 		for _, r := range w.Repos {
 			r.Website = ""
 		}
 	})
-	srv := httptest.NewServer(demo.Handler(w))
+	var hits atomic.Int32
+	h := demo.Handler(w)
+	srv := httptest.NewServer(http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		h.ServeHTTP(rw, r)
+	}))
 	t.Cleanup(srv.Close)
-	return srv.URL
+	return srv.URL, &hits
 }
 
 // childLog collects a child's log and wakes a waiter at each write.
@@ -377,6 +389,13 @@ func TestQuickStartHasNoNewRoutes(t *testing.T) {
 				}
 			}
 		}
+	}
+	// D5: its Settings 404 says why there is none and links to the docs,
+	// still with no Sign in, no link to /settings and no token.
+	if res, body := fetch(t, "GET", srv.base+"/settings", nil, ""); res.StatusCode != 404 || !strings.Contains(body, "This install has no Settings page.") ||
+		!strings.Contains(body, `href="https://github.com/Will-Luck/forgemap/blob/main/docs/configuration.md#moving-to-settings"`) ||
+		strings.Contains(body, "Sign in") || strings.Contains(body, `href="/settings`) || strings.Contains(body, token) {
+		t.Errorf("GET /settings: %d, want 404 with the hint and its link, and no Sign in", res.StatusCode)
 	}
 	srv.stop()
 	if strings.Contains(srv.log(), token) {

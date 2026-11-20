@@ -114,7 +114,11 @@ function results(query) {
     if (m) projects.push({ ...m, kind: "project", title: p.name, sub: p.summary, hint: p.tier_label, icon: p.icon, url: p.url, tile: true, cat: p.cat });
   }
   const commands = [];
-  for (const c of index.commands) {
+  // A typed command (typed_commands, a key an older palette.js never reads)
+  // waits for typing, then for a plain part of its label: its long label
+  // holds the letters of many unrelated words in order.
+  const typed = q ? (index.typed_commands || []).filter((c) => c.label.toLowerCase().includes(q.toLowerCase())) : [];
+  for (const c of index.commands.concat(typed)) {
     const m = q ? best(q, [c.label]) : { score: 0, hits: [] };
     if (m) commands.push({ ...m, kind: "command", title: c.label, icon: c.icon, url: c.url, action: c.action });
   }

@@ -15,7 +15,7 @@ import (
 	"github.com/Will-Luck/forgemap/internal/model"
 )
 
-var pageNames = []string{"overview", "project", "ideas", "ships", "map", "notfound", "signin", "denied", "setup", "settings", "forge"}
+var pageNames = []string{"overview", "project", "ideas", "ships", "issues", "map", "notfound", "signin", "denied", "setup", "settings", "forge"}
 
 type views struct {
 	base  *template.Template
@@ -228,9 +228,23 @@ func (s *server) ideas(w http.ResponseWriter, r *http.Request) {
 func (s *server) ships(w http.ResponseWriter, r *http.Request) {
 	d := s.derived(s.src.Snapshot())
 	p := s.newPage(r, d, "ships", "Ship log")
+	recent := r.URL.Query().Get("days") == "30"
 	p.Desc = "Every release across the projects, and a year of commits."
-	p.Data = d.ships()
+	if recent {
+		p.Desc = "Every release across the projects."
+	}
+	p.Data = d.ships(recent, s.now())
 	s.render(w, r, http.StatusOK, "ships", p)
+}
+
+// issues is every open issue and pull request the site holds, by project.
+// It has no nav entry and no live parts: a reload shows the next snapshot.
+func (s *server) issues(w http.ResponseWriter, r *http.Request) {
+	d := s.derived(s.src.Snapshot())
+	p := s.newPage(r, d, "", "Open issues")
+	p.Desc = "Every open issue and pull request across the projects, by project."
+	p.Data = d.issues()
+	s.render(w, r, http.StatusOK, "issues", p)
 }
 
 func (s *server) mapPage(w http.ResponseWriter, r *http.Request) {
@@ -246,17 +260,38 @@ type notFoundView struct {
 	Path    string
 	Slug    string
 	Suggest []*model.Project
+	// MoveURL is set on a config-file install's setup, sign-in and Settings
+	// paths: the page says why there is no Settings page and links here.
+	MoveURL string
 }
 
+// notFound is the catch-all. On a config-file or quick-start install the
+// Settings family's 404 also says why there is no Settings page.
 func (s *server) notFound(w http.ResponseWriter, r *http.Request) {
 	d := s.derived(s.src.Snapshot())
-	s.renderNotFound(w, r, d, "")
+	move := ""
+	if s.opts.FileInstall && settingsFamily(r.URL.Path) {
+		move = MoveToSettingsURL
+	}
+	s.showNotFound(w, r, d, "", move)
 }
 
 func (s *server) renderNotFound(w http.ResponseWriter, r *http.Request, d *derived, slug string) {
+	s.showNotFound(w, r, d, slug, "")
+}
+
+func (s *server) showNotFound(w http.ResponseWriter, r *http.Request, d *derived, slug, move string) {
 	p := s.newPage(r, d, "", "Not found")
-	p.Data = notFoundView{Path: clip(r.URL.Path), Slug: clip(slug), Suggest: suggest(d.site, slug)}
+	p.Data = notFoundView{Path: clip(r.URL.Path), Slug: clip(slug), Suggest: suggest(d.site, slug), MoveURL: move}
 	s.render(w, r, http.StatusNotFound, "notfound", p)
+}
+
+// settingsFamily: the paths a browser-set-up install answers with setup,
+// sign-in or Settings. /settings and /setup with anything below them,
+// /signin and /signout; nothing else, so /settingsx keeps the plain 404.
+func settingsFamily(p string) bool {
+	return p == "/settings" || strings.HasPrefix(p, "/settings/") || p == "/setup" || strings.HasPrefix(p, "/setup/") ||
+		p == "/signin" || p == "/signout"
 }
 
 // maxSuggest is the longest q suggest compares, in runes. No slug is this

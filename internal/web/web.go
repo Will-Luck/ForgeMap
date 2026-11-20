@@ -29,7 +29,17 @@ type Options struct {
 	// install). Nil, as in file, quick-start, demo and fixture installs:
 	// none of their routes exist.
 	Manager Manager
+	// FileInstall: a live install served from a config file or the
+	// quick-start variables (never demo or fixture, never with a Manager).
+	// Its 404 for setup, sign-in and Settings says why there is no Settings
+	// page, and its palette offers the docs on moving it there. It belongs
+	// to the process: it never reaches site.json.
+	FileInstall bool
 }
+
+// MoveToSettingsURL is the docs section on moving a config-file install to
+// Settings, where the 404 hint and the palette command lead.
+const MoveToSettingsURL = "https://github.com/Will-Luck/forgemap/blob/main/docs/configuration.md#moving-to-settings"
 
 // CSP is the Content-Security-Policy sent with every response.
 const CSP = "default-src 'self'; script-src 'self' 'inline-speculation-rules'; style-src 'self'; img-src 'self' data:; connect-src 'self'; font-src 'self'; form-action 'self'; frame-ancestors 'none'"
@@ -105,6 +115,7 @@ func (s *server) routes() http.Handler {
 	mux.HandleFunc("GET /fragments/overview-head", s.guard(kindLive, s.overviewHead))
 	mux.HandleFunc("GET /ideas", s.guard(kindPage, s.ideas))
 	mux.HandleFunc("GET /ships", s.guard(kindPage, s.ships))
+	mux.HandleFunc("GET /issues", s.guard(kindPage, s.issues))
 	mux.HandleFunc("GET /map", s.guard(kindPage, s.mapPage))
 	mux.HandleFunc("GET /api/site.json", s.guard(kindData, s.apiSite))
 	mux.HandleFunc("GET /api/p/{file}", s.guard(kindData, s.apiProject))

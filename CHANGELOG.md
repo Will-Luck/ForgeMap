@@ -7,6 +7,66 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-11-20
+
+### Added
+
+- **Open issues page.** The overview's **Open issues** tile now opens a
+  page listing every open issue and pull request ForgeMap has read, by
+  project, newest updated first. A repo lists up to 50 of each (on Gitea
+  and Forgejo, the 50 newest issues; on a GitHub mirror, or a GitHub repo
+  read without a token, the issues are taken from the newest opened). A
+  mirror, or a GitHub repo read without a token, lists no pull requests.
+  Where a repo has more, or has not been read yet, the page says so and
+  links to the forge. The command palette has **Open issues** too. At 0
+  the tile stays a plain number.
+- **Shipped in 30 days** on the overview now opens the ship log at just
+  the releases it counts, by month (`/ships?days=30`). **Show all 18
+  months** goes back to every release, and the full ship log links to
+  the shorter view as **Last 30 days**.
+- **Move to Settings.** `forgemap -import-config` (in Docker,
+  `docker exec forgemap forgemap -import-config`) copies a config-file or
+  quick-start install's forges, tokens and page settings into
+  `settings.json`, and prints a one-time setup code and what to do next.
+  Start ForgeMap without its config, make your account with the code, and
+  the install is set up in the browser with its history. The command
+  contacts no forge.
+- **A config-file or quick-start install says where Settings is.** Its
+  404 for `/settings`, `/setup`, `/signin` and `/signout` keeps its
+  heading and buttons, says the install has no Settings page and links
+  to **How to move it to Settings**. Typing **settings** in the search
+  palette finds **Settings (off on this install)**, the same link; it is
+  not listed before you type. While the data folder holds no
+  `settings.json`, the start log says once that `forgemap -import-config`
+  moves the install to Settings. The header and footer do not change.
+
+### Changed
+
+- `site.json` lists more of each project's open issues and pull requests:
+  the new `issues_all` and `prs_all` hold up to 50 open issues and 50 open
+  pull requests per repo, and up to 50 of a mirror's issues. Every listed
+  item names its repo (`repo`) and a draft pull request says so (`draft`).
+  A project with more than one repo of its own lists them, each with its
+  open counts, in `issue_repos`. Gitea and Forgejo are asked for 50 at a
+  time instead of 10, still in one request per list. The `issues` and
+  `prs` lists keep their 10 each (`issues` also keeps up to 10 of a
+  mirror's). Needs you and ideas from labels read what they read before.
+- **GitHub with no token, set up in the browser.** Add a forge now takes
+  GitHub with the token left empty, as a config file always could. A forge
+  added with a token is still tested before it is saved; a GitHub forge
+  with no token is saved without a test. It reads only the public repos
+  your projects file names, at most 60 requests an hour. Settings and
+  setup's forge list show it as **No token: public repos only**, its page
+  says why, and **Add a token** gives it one later.
+- A GitHub forge with an address of its own (set by `url` in a config
+  file, and kept by `forgemap -import-config`) now shows that address in
+  Settings, in setup's forge list and on its page, as a Gitea forge does,
+  so you can see where a token you type there is sent. Settings still
+  does not change it.
+- A start that stops because its data folder is in use, with no config
+  and no `settings.json`, now also says how to keep the folder's history:
+  put the config back and run `forgemap -import-config`.
+
 ## [0.3.0] - 2026-11-17
 
 ### Added
