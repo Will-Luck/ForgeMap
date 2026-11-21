@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- The README tour has a picture of the **Open issues** page.
+- The CI and release workflows run newer versions of six pinned actions:
+  Docker's QEMU, Buildx, metadata and build-push actions, the GitHub
+  release action and the Docker Hub README sync.
+
 ## [0.3.1] - 2026-11-20
 
 ### Added

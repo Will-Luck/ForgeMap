@@ -82,6 +82,8 @@ forge. On Gitea and Forgejo, and on a GitHub mirror or a GitHub forge with
 no token, the issues are taken from the newest opened, not the newest
 updated. A GitHub forge with no token lists no pull requests.
 
+![The Open issues page: 13 open issues and 4 open pull requests across 6 projects, then the issues of ledger and Beacon with their labels, comments and last update](docs/images/tour-issues.png)
+
 ### Project page
 
 **Everything about one project:** is it deployed, is it healthy, what is
