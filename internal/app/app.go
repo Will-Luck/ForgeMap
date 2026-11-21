@@ -10,6 +10,7 @@ import (
 	"hash/fnv"
 	"log"
 	"math/rand/v2"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -85,11 +86,16 @@ var FDroidHeaderWait = 20 * time.Second
 
 // fdroidClient reads F-Droid indexes: no timeout for the whole read, which
 // the read's own deadline bounds, but FDroidHeaderWait for the answer to
-// start.
+// start. An index's server is someone else's, so the client follows a
+// redirect only on the same host (fdroid.CheckRedirect) and, like the forge
+// guard, refuses link-local, metadata, "this network" and multicast addresses
+// at the dial and reads no proxy, so the check sees the real destination.
 func fdroidClient() *http.Client {
 	t := http.DefaultTransport.(*http.Transport).Clone()
 	t.ResponseHeaderTimeout = FDroidHeaderWait
-	return &http.Client{Transport: t}
+	t.Proxy = nil
+	t.DialContext = (&net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second, Control: forge.GuardDial}).DialContext
+	return &http.Client{Transport: t, CheckRedirect: fdroid.CheckRedirect}
 }
 
 // EventsGrace is how long after start events wait for a forge that has not

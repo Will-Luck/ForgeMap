@@ -21,7 +21,7 @@ const (
 
 // mainControls are the main form's control names (CONTRACTS.md section 8).
 var mainControls = map[string]bool{
-	"site.title": true, "site.timezone": true, "sign_in": true, "include_private": true, "site.you": true,
+	"site.title": true, "site.timezone": true, "site.hosts": true, "sign_in": true, "include_private": true, "site.you": true,
 	"notes.type": true, "notes.dir": true, "notes.markers": true, "docker.feed": true, "docker.host": true,
 	"docker.label": true, "projects.file": true, "projects.forge": true, "projects.repo": true,
 	"projects.path": true, "ideas.file": true, "ideas.forge": true, "ideas.repo": true, "ideas.path": true,
@@ -138,6 +138,10 @@ func (m *Manager) checkMain(prev settings.File, f web.MainForm, needForge bool) 
 func setMain(sf *settings.File, f web.MainForm) {
 	c := sf.Config
 	c.Site.Title, c.Site.Timezone, c.Site.You = f.Title, f.Timezone, clean(f.You)
+	c.Site.Hosts = nil // none: any address, which is also the default
+	if h := clean(f.Hosts); len(h) > 0 {
+		c.Site.Hosts = h
+	}
 	c.IncludePrivate = f.IncludePrivate && f.SignInToView
 	c.Notes.Type, c.Notes.Dir, c.Notes.Markers = f.NotesType, f.NotesDir, clean(f.NotesMarkers)
 	c.Docker.Feed, c.Docker.Host, c.Docker.Label = f.DockerFeed, f.DockerHost, f.DockerLabel
@@ -153,7 +157,7 @@ func setMain(sf *settings.File, f web.MainForm) {
 // mainForm is cfg as the main form shows it.
 func mainForm(cfg config.Config, signIn bool) web.MainForm {
 	return web.MainForm{
-		Title: cfg.Site.Title, Timezone: cfg.Site.Timezone, SignInToView: signIn,
+		Title: cfg.Site.Title, Timezone: cfg.Site.Timezone, Hosts: cfg.Site.Hosts, SignInToView: signIn,
 		IncludePrivate: cfg.IncludePrivate, You: cfg.Site.You,
 		NotesType: cfg.Notes.Type, NotesDir: cfg.Notes.Dir, NotesMarkers: cfg.Notes.Markers,
 		DockerFeed: cfg.Docker.Feed, DockerHost: cfg.Docker.Host, DockerLabel: cfg.Docker.Label,

@@ -37,7 +37,7 @@ func (c *Client) Describe(ctx context.Context) (forge.Account, error) {
 	var kept []forge.Repo
 	seen := map[string]bool{}
 	for page := 1; page <= describePages; page++ {
-		var batch []forge.Repo
+		batch := list[forge.Repo]{max: listCap(describeLimit)}
 		q := url.Values{"limit": {strconv.Itoa(describeLimit)}, "page": {strconv.Itoa(page)}}
 		h, err := c.readJSON(ctx, "/user/repos", q, describeBody, &batch)
 		if err != nil && page > 1 && errors.Is(ctx.Err(), context.DeadlineExceeded) {
@@ -47,7 +47,7 @@ func (c *Client) Describe(ctx context.Context) (forge.Account, error) {
 			return forge.Account{}, err
 		}
 		fresh := 0
-		for _, r := range batch {
+		for _, r := range batch.items {
 			if k := strings.ToLower(r.FullName); !seen[k] {
 				seen[k] = true
 				kept = append(kept, r)

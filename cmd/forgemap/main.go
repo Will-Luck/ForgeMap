@@ -110,7 +110,7 @@ func main() {
 			for _, w := range config.OldVariables(os.Environ()) {
 				log.Printf("config: warning: %s", w)
 			}
-			for _, k := range []string{"FORGEMAP_INCLUDE_PRIVATE", "FORGEMAP_REFRESH", "FORGEMAP_FORKS"} {
+			for _, k := range []string{"FORGEMAP_INCLUDE_PRIVATE", "FORGEMAP_REFRESH", "FORGEMAP_FORKS", "FORGEMAP_HOSTS"} {
 				if strings.TrimSpace(os.Getenv(k)) != "" {
 					log.Printf("config: warning: %s is not read: this install is set up in the browser, so change it in Settings", k)
 				}
@@ -188,6 +188,9 @@ func main() {
 
 	var src model.Source
 	opts := web.Options{Version: version, Dev: *fixture != ""}
+	if st == nil {
+		opts.Hosts = cfg.Site.Hosts // set up in the browser, the Manager's Status carries them, live
+	}
 	runDone := make(chan struct{})
 	switch {
 	case st != nil:
@@ -265,6 +268,9 @@ func main() {
 	// Only once the port is bound: a start that fails says nothing of it.
 	if opts.FileInstall && !config.FileExists(filepath.Join(cfg.DataDir, settings.FileName)) {
 		log.Print(importHint)
+	}
+	if len(cfg.Site.Hosts) > 0 {
+		log.Printf("answers only to: %s (and IP addresses, localhost, names without a dot)", strings.Join(cfg.Site.Hosts, ", "))
 	}
 	log.Printf("ForgeMap %s listening on %s (%s)", version, addr, mode)
 	if err := srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {

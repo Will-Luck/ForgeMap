@@ -3,6 +3,8 @@ package app
 import (
 	"bytes"
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -12,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -22,6 +25,7 @@ import (
 	"github.com/Will-Luck/forgemap/internal/config"
 	"github.com/Will-Luck/forgemap/internal/forge"
 	"github.com/Will-Luck/forgemap/internal/model"
+	"github.com/Will-Luck/forgemap/internal/sources/fdroid"
 	"github.com/Will-Luck/forgemap/internal/sources/gitea"
 	"github.com/Will-Luck/forgemap/internal/sources/github"
 )
@@ -1223,6 +1227,135 @@ func TestFDroidPackageNamedLaterIsNotMissing(t *testing.T) {
 	a.catchUpFDroid(ctx)
 	if n := reads.Load() - before; n != 0 {
 		t.Errorf("a kick with nothing new named read the index %d times, want 0", n)
+	}
+}
+
+// A private F-Droid repo's address can carry a user and password, and a
+// token in its query. Neither the fdroid source's error (on the page, in
+// site.json and in the log) nor the log line for a package the index lacks
+// names them, whatever the index answers: a 502, a 401, a redirect to another
+// host (whose target is not named either) or a 200 without the package.
+func TestFDroidAddressCredentialsNotShown(t *testing.T) {
+	var elsewhere atomic.Int32
+	other := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		elsewhere.Add(1)
+		_, _ = w.Write([]byte(`{"packages":{}}`))
+	}))
+	t.Cleanup(other.Close)
+	_, otherPort, _ := net.SplitHostPort(other.Listener.Addr().String())
+	var code atomic.Int32
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch c := int(code.Load()); c {
+		case http.StatusOK:
+			_, _ = w.Write([]byte(`{"packages":{"com.example.other":[{"versionName":"1.0","versionCode":1}]}}`))
+		case http.StatusFound:
+			http.Redirect(w, r, "http://localhost:"+otherPort+"/repo/index-v1.json?token=t2", c)
+		default:
+			w.WriteHeader(c)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	host := srv.Listener.Addr().String()
+	h := newAcmeHost(t)
+	g := h.forge("gitea", "gitea", "t1", []string{"acme"}, &acmeRepo{Owner: "acme", Name: "tool", Updated: fixedNow.Add(-day)})
+	file := writeProjects(t, "projects:\n  - slug: tool\n    name: tool\n    repos:\n      - gitea: acme/tool\n"+
+		"    fdroid: {index: \"https://user:secret@"+host+"/repo/index-v1.json?token=t\", package: com.example.tool}\n")
+	a := h.app(func(c *config.Config) { c.Projects = config.FileRef{File: file} }, g)
+	a.httpc.Transport.(*http.Transport).TLSClientConfig = srv.Client().Transport.(*http.Transport).TLSClientConfig.Clone()
+	var logged bytes.Buffer
+	log.SetOutput(&logged)
+	t.Cleanup(func() { log.SetOutput(os.Stderr) })
+	ctx := context.Background()
+	a.collectRepos(ctx, false)
+	for _, c := range []int{http.StatusBadGateway, http.StatusUnauthorized, http.StatusFound, http.StatusOK} {
+		code.Store(int32(c))
+		a.collectFDroid(ctx)
+		a.assemble()
+		a.mu.Lock()
+		st := a.status["fdroid"]
+		a.mu.Unlock()
+		site, err := json.Marshal(a.Snapshot())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if c != http.StatusOK && (st.OK || !strings.Contains(st.Error, "https://"+host+"/repo/index-v1.json: HTTP "+strconv.Itoa(c))) {
+			t.Errorf("HTTP %d: fdroid status = %+v, want the host and path named", c, st)
+		}
+		for _, leak := range []string{"secret", "token=t", "user:", "localhost", ":" + otherPort} {
+			if strings.Contains(st.Error, leak) || strings.Contains(string(site), leak) {
+				t.Errorf("HTTP %d: the status or site.json names %q: %q", c, leak, st.Error)
+			}
+		}
+	}
+	if !strings.Contains(logged.String(), "package com.example.tool is not in https://"+host+"/repo/index-v1.json") {
+		t.Errorf("the log does not name the index that lacks the package:\n%s", logged.String())
+	}
+	for _, leak := range []string{"secret", "token=t", "user:", "localhost"} {
+		if strings.Contains(logged.String(), leak) {
+			t.Errorf("the log names %q:\n%s", leak, logged.String())
+		}
+	}
+	if elsewhere.Load() != 0 {
+		t.Errorf("the redirect to another host was followed %d times", elsewhere.Load())
+	}
+}
+
+// The F-Droid client follows a redirect on the same host (up to 10 of them)
+// and no other: another host name, or the same name on another port, is the
+// answer's status, with which of the two changed, and is reported without its
+// target. Like the forge guard it refuses link-local, metadata, "this
+// network" and multicast addresses at the dial (0.0.0.0 reaches this host's
+// own listener on Linux, so only the guard keeps it out), and reads no proxy.
+func TestFDroidClientRedirectsAndDials(t *testing.T) {
+	const index = `{"packages":{"com.example.tool":[{"versionName":"3.0","versionCode":30}]}}`
+	var elsewhere, loops atomic.Int32
+	other := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		elsewhere.Add(1)
+		_, _ = w.Write([]byte(index))
+	}))
+	t.Cleanup(other.Close)
+	_, otherPort, _ := net.SplitHostPort(other.Listener.Addr().String())
+	mux := http.NewServeMux()
+	mux.HandleFunc("/index-v1.json", func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte(index)) })
+	mux.HandleFunc("/here", func(w http.ResponseWriter, r *http.Request) { http.Redirect(w, r, "/index-v1.json", http.StatusFound) })
+	mux.HandleFunc("/name", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "http://localhost:"+otherPort+"/index-v1.json", http.StatusMovedPermanently)
+	})
+	mux.HandleFunc("/port", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "http://127.0.0.1:"+otherPort+"/index-v1.json", http.StatusTemporaryRedirect)
+	})
+	mux.HandleFunc("/loop", func(w http.ResponseWriter, r *http.Request) {
+		loops.Add(1)
+		http.Redirect(w, r, "/loop", http.StatusFound)
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	c := fdroidClient()
+	fetch := func(u string) (fdroid.Result, error) {
+		return fdroid.Fetch(context.Background(), c, u, "ForgeMap/test", map[string]bool{"com.example.tool": true}, fdroid.Validators{})
+	}
+	if res, err := fetch(srv.URL + "/here"); err != nil || res.Packages["com.example.tool"].VersionName != "3.0" {
+		t.Errorf("same-host redirect = %+v %v, want it followed", res.Packages, err)
+	}
+	for path, why := range map[string]string{"/name": "301 (redirect to another host", "/port": "307 (redirect to another port"} {
+		_, err := fetch(srv.URL + path)
+		want := fmt.Sprintf("fdroid index %s%s: HTTP %s is not followed)", srv.URL, path, why)
+		if err == nil || err.Error() != want {
+			t.Errorf("%s: %v, want %q", path, err, want)
+		}
+	}
+	if elsewhere.Load() != 0 {
+		t.Errorf("a redirect to another host was followed %d times", elsewhere.Load())
+	}
+	if _, err := fetch(srv.URL + "/loop"); err == nil || !strings.Contains(err.Error(), "stopped after 10 redirects") || loops.Load() != 10 {
+		t.Errorf("a redirect loop: %v after %d requests, want a stop after 10 redirects", err, loops.Load())
+	}
+	_, port, _ := net.SplitHostPort(srv.Listener.Addr().String())
+	if _, err := fetch("http://0.0.0.0:" + port + "/index-v1.json"); !errors.Is(err, forge.ErrAddressRefused) {
+		t.Errorf("0.0.0.0: %v, want forge.ErrAddressRefused", err)
+	}
+	if tr, ok := c.Transport.(*http.Transport); !ok || tr.Proxy != nil || tr.ResponseHeaderTimeout != FDroidHeaderWait {
+		t.Errorf("transport %T, want an *http.Transport without a proxy and the header wait", c.Transport)
 	}
 }
 

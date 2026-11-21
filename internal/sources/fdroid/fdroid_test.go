@@ -8,8 +8,10 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -167,6 +169,189 @@ func TestFetchStopsAtTheCap(t *testing.T) {
 	_, err := Fetch(context.Background(), srv.Client(), srv.URL, "ForgeMap/test", map[string]bool{"org.example.wanted": true}, Validators{})
 	if err == nil || !strings.Contains(err.Error(), "index is over 1 MiB") {
 		t.Errorf("err = %v, want the cap named", err)
+	}
+}
+
+// countReader counts the bytes read through it.
+type countReader struct {
+	r io.Reader
+	n int64
+}
+
+func (c *countReader) Read(p []byte) (int, error) {
+	n, err := c.r.Read(p)
+	c.n += int64(n)
+	return n, err
+}
+
+// A wanted package listed with 5 million "{}" versions (15 MB, a few KB as
+// gzip) fails at the 10,001st: the list is read one version at a time, the
+// highest kept, so neither the rest of it is read nor a record kept of each.
+// A list of exactly 10,000 reads as before.
+func TestTooManyVersionsFailsFast(t *testing.T) {
+	list := strings.Repeat("{},", 5_000_000-1)
+	r := &countReader{r: io.MultiReader(strings.NewReader(`{"packages":{"com.example.app":[`), strings.NewReader(list), strings.NewReader(`{}]}}`))}
+	var before, after runtime.MemStats
+	runtime.GC()
+	runtime.ReadMemStats(&before)
+	_, err := decode(r, map[string]bool{"com.example.app": true})
+	runtime.ReadMemStats(&after)
+	if err == nil || err.Error() != "fdroid index: too many versions for com.example.app" {
+		t.Errorf("err = %v, want too many versions for com.example.app", err)
+	}
+	if alloc := after.TotalAlloc - before.TotalAlloc; alloc > 16<<20 {
+		t.Errorf("the read allocated %d MiB, want a few", alloc>>20)
+	}
+	if r.n > 1<<20 {
+		t.Errorf("%d KiB of the list were read, want it left after the 10,001st version", r.n>>10)
+	}
+
+	var b strings.Builder
+	b.WriteString(`{"packages":{"a":[`)
+	for i := 1; i <= 10_000; i++ {
+		if i > 1 {
+			b.WriteByte(',')
+		}
+		fmt.Fprintf(&b, `{"versionName":"v%d","versionCode":%d}`, i, (i*7919)%10_007)
+	}
+	b.WriteString(`]}}`)
+	pkgs, err := ParseIndex([]byte(b.String()))
+	if err != nil || pkgs["a"].VersionCode != 10_006 {
+		t.Errorf("10,000 versions = %+v %v, want the highest code, 10006", pkgs["a"], err)
+	}
+	// null versions read as none, as before; a list that is no list fails.
+	if pkgs, err := ParseIndex([]byte(`{"packages":{"a":null,"b":[]}}`)); err != nil || len(pkgs) != 0 {
+		t.Errorf("null and empty lists = %v %v, want no packages", pkgs, err)
+	}
+	if _, err := ParseIndex([]byte(`{"packages":{"a":{}}}`)); err == nil {
+		t.Error("an object for a version list must fail")
+	}
+}
+
+// An index address can carry a private repo's user and password, and a
+// token in its query. No error names them, whatever the index answers or
+// however the read fails: only the scheme, host and path. The address still
+// works: its user and password are sent as basic auth.
+func TestErrorsLeaveOutTheUserPasswordAndQuery(t *testing.T) {
+	var code atomic.Int32
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if user, pass, ok := r.BasicAuth(); !ok || user != "user" || pass != "secret" || r.URL.Query().Get("token") != "t" {
+			t.Errorf("request without the address's credentials: %v %q", ok, r.URL.RawQuery)
+		}
+		if c := int(code.Load()); c != http.StatusOK {
+			w.WriteHeader(c)
+			return
+		}
+		_, _ = w.Write([]byte(`{"packages":{"com.example.app":[{"versionName":"2.0","versionCode":20}]}}`))
+	}))
+	defer srv.Close()
+	host := srv.Listener.Addr().String()
+	index := "https://user:secret@" + host + "/repo/index-v1.json?token=t"
+	check := func(what string, err error, want string) {
+		t.Helper()
+		msg := fmt.Sprint(err)
+		if err == nil || strings.Contains(msg, "secret") || strings.Contains(msg, "token=t") || strings.Contains(msg, "user") || !strings.Contains(msg, want) {
+			t.Errorf("%s: %q, want %q with no user, password or query", what, msg, want)
+		}
+	}
+	for _, c := range []int{http.StatusBadGateway, http.StatusUnauthorized} {
+		code.Store(int32(c))
+		_, err := Fetch(context.Background(), srv.Client(), index, "ForgeMap/test", nil, Validators{})
+		check(fmt.Sprint(c), err, fmt.Sprintf("fdroid index https://%s/repo/index-v1.json: HTTP %d", host, c))
+	}
+	code.Store(http.StatusOK)
+	if res, err := Fetch(context.Background(), srv.Client(), index, "ForgeMap/test", nil, Validators{}); err != nil || res.Packages["com.example.app"].VersionCode != 20 {
+		t.Errorf("a private repo's read = %+v %v", res.Packages, err)
+	}
+	// A redirect to another host: not followed, its target not named.
+	var followed atomic.Int32
+	other := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { followed.Add(1) }))
+	defer other.Close()
+	_, otherPort, _ := strings.Cut(other.Listener.Addr().String(), ":")
+	moved := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "http://localhost:"+otherPort+"/repo/index-v1.json?token=t2", http.StatusFound)
+	}))
+	defer moved.Close()
+	mc := moved.Client()
+	mc.CheckRedirect = CheckRedirect
+	movedHost := moved.Listener.Addr().String()
+	_, err := Fetch(context.Background(), mc, "https://user:secret@"+movedHost+"/repo/index-v1.json?token=t", "ForgeMap/test", nil, Validators{})
+	check("redirect", err, "fdroid index https://"+movedHost+"/repo/index-v1.json: HTTP 302 (redirect to another host is not followed)")
+	if msg := fmt.Sprint(err); strings.Contains(msg, "localhost") || strings.Contains(msg, otherPort) || followed.Load() != 0 {
+		t.Errorf("redirect: %q, followed %d times; want the target neither named nor asked", msg, followed.Load())
+	}
+	// A failed connection, and an address that does not parse.
+	gone := httptest.NewServer(http.NotFoundHandler())
+	gone.Close()
+	closed := gone.Listener.Addr().String()
+	_, err = Fetch(context.Background(), &http.Client{}, "http://user:secret@"+closed+"/repo/index-v1.json?token=t", "ForgeMap/test", nil, Validators{})
+	check("refused", err, closed+"/repo/index-v1.json")
+	_, err = Fetch(context.Background(), &http.Client{}, "https://user:secret%zz@"+host+"/repo/index-v1.json?token=t", "ForgeMap/test", nil, Validators{})
+	check("bad escape", err, "fdroid index")
+}
+
+// The redirect rule: the same host name in any case; the same scheme, or
+// http to https but never back; the same port or the new scheme's default.
+// A redirect not followed says which of the three it changes. Ten redirects
+// on the same host stop the read. (Loopback servers cannot listen on 80 and
+// 443, so the default ports are tried on built requests; internal/app's
+// TestFDroidClientRedirectsAndDials runs the rest on them.)
+func TestCheckRedirect(t *testing.T) {
+	const host, scheme, port = "HTTP 301 (redirect to another host is not followed)",
+		"HTTP 301 (redirect from https to http is not followed)", "HTTP 301 (redirect to another port is not followed)"
+	for _, tc := range []struct {
+		from, to string
+		refused  string // "" for followed
+	}{
+		{"https://fdroid.example.com/repo/index-v1.json", "https://fdroid.example.com/other/index-v1.json", ""},
+		{"https://fdroid.example.com/repo", "https://FDroid.Example.com/repo/", ""},
+		{"http://fdroid.example.com/repo", "https://fdroid.example.com/repo", ""},
+		{"http://fdroid.example.com:8080/repo", "https://fdroid.example.com/repo", ""},
+		{"https://fdroid.example.com:8443/repo", "https://fdroid.example.com:443/repo", ""},
+		{"https://fdroid.example.com:443/repo", "https://fdroid.example.com/repo", ""},
+		{"http://127.0.0.1:8080/repo", "http://127.0.0.1:8080/x", ""},
+		{"https://fdroid.example.com/repo", "http://fdroid.example.com/repo", scheme},
+		{"https://fdroid.example.com:8443/repo", "http://fdroid.example.com:8443/repo", scheme},
+		{"http://fdroid.example.com/repo", "ftp://fdroid.example.com/repo", "HTTP 301 (redirect to another scheme is not followed)"},
+		{"https://fdroid.example.com/repo", "https://cdn.example.com/repo", host},
+		{"https://fdroid.example.com/repo", "http://cdn.example.com/repo", host},
+		{"https://fdroid.example.com/repo", "https://fdroid.example.com.evil.example/repo", host},
+		{"https://fdroid.example.com/repo", "https://fdroid.example.com:8443/repo", port},
+		{"http://fdroid.example.com:8080/repo", "https://fdroid.example.com:8443/repo", port},
+		{"http://127.0.0.1:8080/repo", "http://localhost:8080/repo", host},
+		{"http://127.0.0.1:8080/repo", "http://169.254.169.254/latest/meta-data/", host},
+	} {
+		from, _ := http.NewRequest(http.MethodGet, tc.from, nil)
+		to, _ := http.NewRequest(http.MethodGet, tc.to, nil)
+		to.Response = &http.Response{StatusCode: http.StatusMovedPermanently}
+		err := CheckRedirect(to, []*http.Request{from})
+		if tc.refused == "" && err != nil {
+			t.Errorf("%s to %s: %v, want it followed", tc.from, tc.to, err)
+		}
+		if tc.refused != "" && (err == nil || err.Error() != tc.refused) {
+			t.Errorf("%s to %s: %v, want %s", tc.from, tc.to, err, tc.refused)
+		}
+	}
+	via := make([]*http.Request, 10)
+	for i := range via {
+		via[i], _ = http.NewRequest(http.MethodGet, "https://fdroid.example.com/repo", nil)
+	}
+	next, _ := http.NewRequest(http.MethodGet, "https://fdroid.example.com/repo", nil)
+	if err := CheckRedirect(next, via); err == nil || err.Error() != "stopped after 10 redirects" {
+		t.Errorf("the 11th request: %v, want stopped after 10 redirects", err)
+	}
+	if err := CheckRedirect(next, via[:9]); err != nil {
+		t.Errorf("the 10th request: %v, want it made", err)
+	}
+	for in, want := range map[string]string{
+		"https://user:secret@fdroid.example.com:8443/repo/index-v1.json?token=t#frag": "https://fdroid.example.com:8443/repo/index-v1.json",
+		"https://fdroid.example.com/repo/index-v1.json":                               "https://fdroid.example.com/repo/index-v1.json",
+		"user:secret@fdroid.example.com/repo":                                         "(an address that is not a full URL)",
+		"https://user:secret%zz@fdroid.example.com/repo":                              "(an address that is not a full URL)",
+	} {
+		if got := Redact(in); got != want {
+			t.Errorf("Redact(%q) = %q, want %q", in, got, want)
+		}
 	}
 }
 

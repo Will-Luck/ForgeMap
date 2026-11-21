@@ -52,7 +52,11 @@ func readCaches(dir string, projects, ideasSet bool, forgeIDs []string) (*regist
 }
 
 // writeFileAtomic writes beside the target and renames, so a reader (or a
-// crash) never sees half a file.
+// crash) never sees half a file. The file is readable by its owner only
+// (0600, as CreateTemp makes it), like state.json and settings.json: the
+// caches hold the projects file's private repos and hosts. The rename puts
+// that mode over a cache an older build wrote 0644. No chmod is asked for, so
+// a file system that refuses one (FAT, exFAT) still gets its cache.
 func writeFileAtomic(path string, b []byte) error {
 	tmp, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".tmp*")
 	if err != nil {
@@ -63,10 +67,6 @@ func writeFileAtomic(path string, b []byte) error {
 	serr := tmp.Sync()
 	cerr := tmp.Close()
 	if err := firstErr(werr, serr, cerr); err != nil {
-		_ = os.Remove(name)
-		return err
-	}
-	if err := os.Chmod(name, 0o644); err != nil {
 		_ = os.Remove(name)
 		return err
 	}

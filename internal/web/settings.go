@@ -94,9 +94,13 @@ func parseList(s string) []string {
 // joinList writes a list for its text field, as parseList reads it.
 func joinList(l []string) string { return strings.Join(l, ", ") }
 
+// joinLines writes a list for its text area, one item per line, as parseList
+// reads it.
+func joinLines(l []string) string { return strings.Join(l, "\n") }
+
 // mainControls are the main form's control names, in the page's order: the
 // top of a refused form links to the first refused one.
-var mainControls = []string{"site.title", "site.timezone", "sign_in", "include_private", "notes.type", "notes.dir",
+var mainControls = []string{"site.title", "site.timezone", "site.hosts", "sign_in", "include_private", "notes.type", "notes.dir",
 	"notes.markers", "site.you", "docker.feed", "docker.host", "docker.label", "projects.file", "projects.forge", "projects.repo", "projects.path",
 	"ideas.file", "ideas.forge", "ideas.repo", "ideas.path", "ideas.labels", "ideas.marker", "needs_you.labels", "needs_you.assigned",
 	"needs_you.review_requests", "plans.dirs", "probes.homepages", "refresh"}
@@ -110,7 +114,8 @@ func mainForm(v url.Values) MainForm {
 		return FileRefForm{File: text(p + ".file"), Forge: text(p + ".forge"), Repo: text(p + ".repo"), Path: text(p + ".path")}
 	}
 	return MainForm{
-		Title: text("site.title"), Timezone: text("site.timezone"), SignInToView: on("sign_in"), IncludePrivate: on("include_private"),
+		Title: text("site.title"), Timezone: text("site.timezone"), Hosts: parseList(v.Get("site.hosts")),
+		SignInToView: on("sign_in"), IncludePrivate: on("include_private"),
 		You: parseList(v.Get("site.you")), NotesType: text("notes.type"), NotesDir: text("notes.dir"), NotesMarkers: parseList(v.Get("notes.markers")),
 		DockerFeed: text("docker.feed"), DockerHost: text("docker.host"), DockerLabel: text("docker.label"),
 		Projects: ref("projects"), Ideas: ref("ideas"),
@@ -220,7 +225,10 @@ func (s *server) saveMain(w http.ResponseWriter, r *http.Request) {
 	}
 	m := s.opts.Manager
 	f := mainForm(r.PostForm)
-	err := m.SaveMain(f)
+	err := keepsThisAddress(r, f.Hosts)
+	if err == nil {
+		err = m.SaveMain(f)
+	}
 	if err == nil {
 		s.notice.put("Saved. The page uses the new settings now.", "", "", s.now())
 		seeOther(w, r, "/settings")
@@ -235,6 +243,10 @@ func (s *server) saveMain(w http.ResponseWriter, r *http.Request) {
 	s.renderSettings(w, r, code, v)
 }
 
+// keyStillWorks follows the password's hint and the notice after a change
+// while there is a feed key: a new password leaves the key as it was.
+const keyStillWorks = "The feed key still works. If someone else may have used this account, press Make a new key under Access."
+
 // changePassword hands the three fields to the Manager as typed and sets
 // the changer's new cookie. A refusal shows the Account section again with
 // no field filled in.
@@ -247,7 +259,11 @@ func (s *server) changePassword(w http.ResponseWriter, r *http.Request) {
 	cs, err := m.ChangePassword(r, PasswordForm{Current: v.Get("current"), Password: v.Get("password"), Confirm: v.Get("confirm")})
 	if err == nil {
 		setCookies(w, cs)
-		s.notice.put("Password changed. Every other device is signed out.", "", "account", s.now())
+		text := "Password changed. Every other device is signed out."
+		if m.Settings().KeyTail != "" {
+			text += " " + keyStillWorks
+		}
+		s.notice.put(text, "", "account", s.now())
 		seeOther(w, r, "/settings#account")
 		return
 	}

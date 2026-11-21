@@ -1,7 +1,10 @@
 name: Weekly scan
 
-# Scans the latest release's linux/amd64 binary with govulncheck once a week,
-# so a Go security release between ForgeMap releases is noticed. Binary mode
+# Scans two things with govulncheck once a week, so a Go security release
+# between ForgeMap releases is noticed. The govulncheck job scans the latest
+# release's linux/amd64 binary (what the binary downloads ship). The image job
+# scans the forgemap binary inside ghcr.io/will-luck/forgemap:latest (what the
+# image installs run, built with the Go that image was released with). Binary mode
 # reports the vulnerable symbols a binary holds, not whether ForgeMap reaches
 # them: any finding fails this run. A standard library finding means
 # "rebuild needed" (a release built with the newest Go); a module finding
@@ -41,3 +44,28 @@ jobs:
         run: |
           go install golang.org/x/vuln/cmd/govulncheck@v1.9.0
           govulncheck -mode=binary forgemap-linux-amd64
+
+  image:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Set up Go
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version: '1.27'
+          check-latest: true
+          cache: false
+
+      # The binary is copied out of a created container: the image never runs.
+      - name: Copy the binary out of the latest image
+        run: |
+          set -euo pipefail
+          docker pull ghcr.io/will-luck/forgemap:latest
+          id=$(docker create ghcr.io/will-luck/forgemap:latest)
+          docker cp "$id:/usr/local/bin/forgemap" forgemap-image
+          docker rm "$id"
+
+      - name: govulncheck (image binary)
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@v1.9.0
+          govulncheck -mode=binary forgemap-image

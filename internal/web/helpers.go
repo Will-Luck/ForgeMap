@@ -102,6 +102,7 @@ func (s *server) funcs() template.FuncMap {
 		"num":         func(n int) string { return thousands(n) },
 		"dict":        dict,
 		"joinList":    joinList,
+		"joinLines":   joinLines,
 		"ownersWith":  ownersWith,
 		"repoCount":   repoCount,
 		"fingerprint": fingerprint,

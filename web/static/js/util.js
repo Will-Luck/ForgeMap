@@ -105,6 +105,19 @@ export const isTyping = (target) =>
   target instanceof Element &&
   (target.closest("input, textarea, select, [contenteditable=''], [contenteditable='true']") !== null);
 
+// u when it opens a web page, read against this page (http or https, so a
+// path on this site too), else null: a link from a forge is never handed to
+// a program on the computer (search-ms:, vscode: and the like).
+export function webURL(u) {
+  if (!u) return null;
+  try {
+    const p = new URL(u, document.baseURI).protocol;
+    return p === "http:" || p === "https:" ? u : null;
+  } catch {
+    return null;
+  }
+}
+
 // True on an install set up in the browser, which has its own sign-in (the
 // layout marks the page). Elsewhere there is no /signin: a 401 can only come
 // from a proxy in front, and is not this page's to answer.

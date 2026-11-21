@@ -1,6 +1,6 @@
 // Command palette: Ctrl K, Cmd K or "/" (not while typing). Fuzzy subsequence
 // search over projects, ideas, open issues and commands from /api/search.json.
-import { el, icon, isTyping, signedOut } from "./util.js";
+import { el, icon, isTyping, signedOut, webURL } from "./util.js";
 import { toggleTheme } from "./theme.js";
 
 const dialog = document.getElementById("palette");
@@ -234,9 +234,10 @@ async function choose(it) {
     else location.href = "/ideas#surprise";
     return;
   }
-  if (it.url) {
+  const to = webURL(it.url);
+  if (to) {
     close();
-    location.href = it.url;
+    location.href = to;
   }
 }
 

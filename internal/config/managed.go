@@ -32,6 +32,7 @@ type Managed struct {
 		Title    string   `json:"title"`
 		Timezone string   `json:"timezone"`
 		You      []string `json:"you"`
+		Hosts    []string `json:"hosts,omitempty"` // none: any address, and a file with none stays as it was
 	} `json:"site"`
 	IncludePrivate bool           `json:"include_private"`
 	Forges         []ManagedForge `json:"forges"`
@@ -91,7 +92,7 @@ func FromManaged(m Managed, getenv func(string) string) Config {
 	}
 	includePrivate := m.IncludePrivate
 	fc := fileConfig{
-		Site:           fileSite{Title: m.Site.Title, Timezone: m.Site.Timezone, You: m.Site.You},
+		Site:           fileSite{Title: m.Site.Title, Timezone: m.Site.Timezone, You: m.Site.You, Hosts: m.Site.Hosts},
 		IncludePrivate: &includePrivate,
 		Projects:       fileRef(m.Projects),
 		Ideas:          fileIdeas{Labels: m.Ideas.Labels, fileRef: fileRef(m.Ideas.FileRef), Marker: m.Ideas.Marker},
@@ -133,7 +134,7 @@ func (f Forge) StandardGitHub() bool {
 // FromManaged(c.AsManaged(), ...) runs as c does.
 func (c Config) AsManaged() Managed {
 	var m Managed
-	m.Site.Title, m.Site.Timezone, m.Site.You = c.Site.Title, c.Site.Timezone, c.Site.You
+	m.Site.Title, m.Site.Timezone, m.Site.You, m.Site.Hosts = c.Site.Title, c.Site.Timezone, c.Site.You, c.Site.Hosts
 	m.IncludePrivate = c.IncludePrivate
 	for _, f := range c.Forges {
 		url, heatmap := f.URL, f.Heatmap

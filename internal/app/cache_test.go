@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -73,6 +74,39 @@ func TestGoodLoadWritesCaches(t *testing.T) {
 	left, _ := filepath.Glob(filepath.Join(w.dataDir, "*.tmp*"))
 	if len(left) != 0 {
 		t.Errorf("temp files left behind: %v", left)
+	}
+}
+
+// The caches hold the projects file (private repos, internal hosts, F-Droid
+// addresses) and ideas: they are written readable by their owner only
+// (0600), like state.json and settings.json, on a fresh data dir and over
+// caches an older build wrote 0644. The umask is cleared, so 0644 is what a
+// write that set no mode would give.
+func TestCachesAreOwnerOnly(t *testing.T) {
+	old := syscall.Umask(0)
+	t.Cleanup(func() { syscall.Umask(old) })
+	for _, older := range []bool{false, true} {
+		w := newWorld(t)
+		if older {
+			for _, name := range []string{projectsCache, ideasCache} {
+				p := filepath.Join(w.dataDir, name)
+				if err := os.WriteFile(p, []byte("old"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Chmod(p, 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+		}
+		if _, err := w.app.RunOnce(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		for _, name := range []string{projectsCache, ideasCache} {
+			fi, err := os.Stat(filepath.Join(w.dataDir, name))
+			if err != nil || fi.Mode().Perm() != 0o600 {
+				t.Errorf("older 0644 cache %v: %s %v %v, want mode 0600", older, name, err, fi)
+			}
+		}
 	}
 }
 

@@ -1139,6 +1139,19 @@ type searchCommand struct {
 	Action string `json:"action,omitempty"`
 }
 
+// webLink is u, a link from a forge, when a browser opens it as a web page:
+// http, https, or no scheme (a path on this site). Any other (search-ms:,
+// vscode:, javascript:, or one Go cannot read) is "", so the palette and
+// the toasts never hand it to a program on the viewer's computer. The page
+// templates need no such step: html/template already rewrites those.
+func webLink(u string) string {
+	p, err := url.Parse(u)
+	if err != nil || p.Scheme != "" && p.Scheme != "http" && p.Scheme != "https" {
+		return ""
+	}
+	return u
+}
+
 // buildSearch is the palette's index. fileInstall adds the command that
 // says a config-file or quick-start install has no Settings page.
 func buildSearch(site *model.Site, fileInstall bool) []byte {
@@ -1148,7 +1161,7 @@ func buildSearch(site *model.Site, fileInstall bool) []byte {
 			TierLabel: tierLabel(p), Icon: p.Icon, Cat: p.Category, URL: "/p/" + p.Slug})
 		for _, is := range p.Issues {
 			ix.Issues = append(ix.Issues, searchIssue{Number: is.Number, Title: is.Title, Project: p.Slug, Name: p.Name, Source: is.Source,
-				Forge: is.Forge, Mirror: is.Mirror, URL: is.URL})
+				Forge: is.Forge, Mirror: is.Mirror, URL: webLink(is.URL)})
 		}
 	}
 	if site.Meta.Ideas {

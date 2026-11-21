@@ -12,6 +12,7 @@ import (
 	"github.com/Will-Luck/forgemap/internal/model"
 	"github.com/Will-Luck/forgemap/internal/registry"
 	"github.com/Will-Luck/forgemap/internal/sources/docker"
+	"github.com/Will-Luck/forgemap/internal/sources/fdroid"
 )
 
 var nilTime time.Time
@@ -84,7 +85,7 @@ func (a *App) inputsLocked(now time.Time) derive.SiteInput {
 				if pkg, ok := fd.pkgs[p.FDroid.Package]; ok {
 					in.FDroid, in.FDroidAt = &pkg, fd.at
 				} else {
-					a.warnOnce("project " + p.Slug + ": package " + p.FDroid.Package + " is not in " + p.FDroid.Index)
+					a.warnOnce("project " + p.Slug + ": package " + p.FDroid.Package + " is not in " + fdroid.Redact(p.FDroid.Index))
 				}
 			}
 		}

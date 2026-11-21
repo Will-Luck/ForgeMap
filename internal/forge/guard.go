@@ -48,6 +48,13 @@ func guardDial(_, address string, _ syscall.RawConn) error {
 	return nil
 }
 
+// GuardDial is the guarded clients' dial check (a net.Dialer's Control), for
+// another client that must refuse the same addresses: the F-Droid reader,
+// which follows a same-host redirect and so dials what a DNS answer says.
+func GuardDial(network, address string, c syscall.RawConn) error {
+	return guardDial(network, address, c)
+}
+
 // NewGuardedClient is the HTTP client of every forge request on a
 // browser-set-up install, where an address is typed into a form and a token
 // is sent to it. One client serves every forge and is safe for concurrent

@@ -21,11 +21,12 @@ var (
 	selectRe = regexp.MustCompile(`(?s)<select\b[^>]*\bname="([^"]*)"[^>]*>(.*?)</select>`)
 	chosenRe = regexp.MustCompile(`<option value="([^"]*)" selected>`)
 	attrRe   = regexp.MustCompile(`\s(name|value|type)="([^"]*)"`)
+	areaRe   = regexp.MustCompile(`(?s)<textarea\b[^>]*\bname="([^"]*)"[^>]*>(.*?)</textarea>`)
 )
 
 // formValues is what a browser sends for the form with this id as rendered:
-// each named input (a tick box or radio only when checked) and each select's
-// chosen option.
+// each named input (a tick box or radio only when checked), each select's
+// chosen option and each text area's text.
 func formValues(t *testing.T, body, id string) url.Values {
 	t.Helper()
 	v, inner := url.Values{}, ""
@@ -47,6 +48,9 @@ func formValues(t *testing.T, body, id string) url.Values {
 		if o := chosenRe.FindStringSubmatch(m[2]); o != nil {
 			v.Add(m[1], html.UnescapeString(o[1]))
 		}
+	}
+	for _, m := range areaRe.FindAllStringSubmatch(inner, -1) {
+		v.Add(m[1], html.UnescapeString(m[2]))
 	}
 	if len(v) == 0 {
 		t.Fatalf("no form %q with controls", id)

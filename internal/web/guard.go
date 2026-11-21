@@ -122,6 +122,9 @@ func comeBack(r *http.Request) string { return withoutSecrets(r.URL.RequestURI()
 // sign-in token (once) taken out of its query (the query is written anew
 // only when it held one). Sign-in passes every next through it, as well as
 // comeBack: a page's script builds next from the address it was opened at.
+// Writing the address anew can turn a local path into another site's
+// ("/%2Fhost/^" becomes "//host/%5E"), so what it writes is checked again
+// and is "/" when it is not a local path.
 func withoutSecrets(p string) string {
 	u, err := url.Parse(p)
 	if err != nil {
@@ -134,5 +137,5 @@ func withoutSecrets(p string) string {
 	q.Del("key")
 	q.Del("once")
 	u.RawQuery = q.Encode()
-	return u.String()
+	return auth.NextPath(u.String())
 }

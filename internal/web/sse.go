@@ -160,7 +160,9 @@ func (s *server) sseMessage(c model.Change) (string, []byte) {
 		if c.Event == nil {
 			return "", nil
 		}
-		v = c.Event
+		ev := *c.Event // a copy: every stream gets the same Event
+		ev.Href = webLink(ev.Href)
+		v = ev
 	case "tick":
 		v = s.tick(s.src.Snapshot(), c.At)
 	default:

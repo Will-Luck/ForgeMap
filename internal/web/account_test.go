@@ -47,6 +47,32 @@ func TestPasswordAndKey(t *testing.T) {
 	went(t, "failed key", rec, 500, "")
 }
 
+// A new password leaves the feed key as it was, so with a key the hint under
+// Change password and the notice after a change say that it still works and
+// how to stop it; with no key neither mentions one.
+func TestPasswordChangeSaysTheFeedKeyStillWorks(t *testing.T) {
+	const keyLine = "The feed key still works. If someone else may have used this account, press Make a new key under Access."
+	form := url.Values{"current": {"a"}, "password": {"b"}, "confirm": {"b"}}
+	for _, tail := range []string{"stuv", ""} {
+		f, h := owned(t, false)
+		f.settings.KeyTail = tail
+		hint := `<p class="field-hint" id="hint-password">12 characters or more. Every other device is signed out.`
+		notice := "Password changed. Every other device is signed out."
+		if tail != "" {
+			hint, notice = hint+" "+keyLine+"</p>", notice+" "+keyLine
+		} else {
+			hint += "</p>"
+		}
+		bodyHas(t, "the hint, key "+tail, asOwner(t, h, "/settings").Body.String(), []string{hint}, nil)
+		went(t, "password, key "+tail, send(t, h, http.MethodPost, "/settings/password", true, form, nil), 303, "/settings#account")
+		after := asOwner(t, h, "/settings").Body.String()
+		bodyHas(t, "the notice, key "+tail, after, []string{notice}, nil)
+		if tail == "" {
+			bodyHas(t, "no key", after, nil, []string{"feed key still works", "Make a new key under Access"})
+		}
+	}
+}
+
 // A one-time notice waits a minute for the owner's next Settings page, so a
 // whole new feed key waits in memory no longer than that: a minute and a
 // second later the page shows its tail only.

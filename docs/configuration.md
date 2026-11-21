@@ -62,6 +62,7 @@ an empty string.
 | `DATA_DIR` | State directory, when the file has no `data_dir` | `/data` |
 | `FORGEMAP_TITLE` | Page title, when the file has no `site.title` | `ForgeMap` |
 | `TZ` | Time zone, when the file has no `site.timezone` | `UTC` |
+| `FORGEMAP_HOSTS` | Comma-separated host names the page answers to, when the file has no `site.hosts` (the only way in the quick start). See [Addresses](#addresses) | none: any address |
 | `FORGEMAP_INCLUDE_PRIVATE` | `true` or `false`: show private repos, when the file has no `include_private` (the only way in the quick start) | `false` |
 | `FORGEMAP_FORKS` | Quick start only: `true` or `false`, track forks too (a file sets `forges[].forks` per forge) | `false` |
 | `FORGEMAP_REFRESH` | `true` or `false`: offer Refresh now and `POST /api/refresh`, when the file has no `refresh` | `true` |
@@ -107,7 +108,9 @@ browser)`), and warns of a token whose `${VAR}` is
 empty or not set; it never prints a value. A config-file or quick-start
 install whose data folder holds no `settings.json` adds, once it is
 serving, `config: no Settings page on this install; forgemap -import-config
-moves it to Settings`.
+moves it to Settings`. With a list of [addresses](#addresses) it also says
+which names the page answers to: `answers only to: status.example.com (and
+IP addresses, localhost, names without a dot)`.
 
 ## Set up in the browser
 
@@ -134,8 +137,8 @@ install is set up in the browser instead.
   is saved.
 - **The environment:** `FORGEMAP_LISTEN` and `DATA_DIR` still apply. `TZ` and
   `FORGEMAP_TITLE` only fill in the setup form. `FORGEMAP_INCLUDE_PRIVATE`,
-  `FORGEMAP_REFRESH` and `FORGEMAP_FORKS` are not read; the log warns once
-  for each one that is set.
+  `FORGEMAP_REFRESH`, `FORGEMAP_FORKS` and `FORGEMAP_HOSTS` are not read;
+  the log warns once for each one that is set.
 - **The setup window:** a start that finds no account keeps setup open
   for 5 minutes, and the log says until when (`setup: open the page and
   make your account within 5 minutes, by 14:05:09. A restart opens setup
@@ -182,6 +185,10 @@ install is set up in the browser instead.
   refused as sent from another site.
 - **Plain HTTP** sends the password across the network in clear: use HTTPS,
   or keep the page on your LAN or VPN.
+- **Addresses:** in Settings, **Addresses this page answers to** (in the
+  page's settings) takes the names ForgeMap should answer to, one per line
+  (commas work too); see [Addresses](#addresses). Settings refuses a list
+  that leaves out the address you are using, so a save cannot lock you out.
 - **One address, several apps:** cookies are shared across the ports of one
   host name, so give ForgeMap a host name of its own.
 - **Forge requests** ignore `HTTP_PROXY` and `HTTPS_PROXY` and follow no
@@ -251,8 +258,8 @@ and the rest is done in the browser.
   its token (a `${VAR}` token is stored as its value, in plain text, so a
   later change to the variable no longer reaches it), and every page
   setting as the install runs it, defaults and the values of
-  `FORGEMAP_TITLE`, `TZ`, `FORGEMAP_INCLUDE_PRIVATE`, `FORGEMAP_REFRESH`
-  and `FORGEMAP_FORKS` included. A GitHub forge with an address of its own
+  `FORGEMAP_TITLE`, `TZ`, `FORGEMAP_INCLUDE_PRIVATE`, `FORGEMAP_REFRESH`,
+  `FORGEMAP_FORKS` and `FORGEMAP_HOSTS` included. A GitHub forge with an address of its own
   keeps it; Settings shows it and does not change it.
 - **What is not:** `listen` and `data_dir`, which are not settings. The
   next start serves on `FORGEMAP_LISTEN`, else `:8080`, and keeps its data
@@ -290,13 +297,43 @@ off.
 | `site.title` | string | `ForgeMap` (or `FORGEMAP_TITLE`) | The page title, header and footer |
 | `site.timezone` | string | `$TZ`, else `UTC` | An IANA zone such as `Europe/Paris`. Every date and time on the page is written in it, and "today" and the week boundaries follow it |
 | `site.you` | list of strings | `[]` | Your names as notes write them. Only the `claude-memory` notes type reads it; with no names, nothing in those notes waits on you |
+| `site.hosts` | list of strings | `[]` (or `FORGEMAP_HOSTS`) | The host names the page answers to, such as `status.example.com`: a name alone, with no `http://`, port, path or `*`. Empty: any name. See [Addresses](#addresses) |
 
 ```yaml
 site:
   title: Team status
   timezone: America/New_York
   you: [Mark]
+  hosts: [status.example.com]
 ```
+
+#### Addresses
+
+Keeping ForgeMap on your LAN or VPN does not stop a web page open in a
+browser on that network from reaching it under another name: the page's
+own site can point one of its names at ForgeMap's address (DNS
+rebinding). With sign-in on, that page gets nothing of yours: the browser
+does not send it your sign-in. With sign-in off, or on a config-file or
+quick-start install, which has no sign-in, list the names ForgeMap should
+answer to, in `site.hosts`, `FORGEMAP_HOSTS` or Settings.
+
+- With a list, a request made at any other name gets status 421 and a
+  short page that says so, before anything else: no page, data, feed or
+  file. Every name in `X-Forwarded-Host` must be on the list too, or be
+  one that always works (see the next point).
+- IP addresses, `localhost`, names that end in `.localhost` and names
+  without a dot always work, so you can still reach the page to fix the
+  list.
+- Behind a reverse proxy, the list sees only the names the proxy passes
+  on: let it pass the browser's `Host` or set `X-Forwarded-Host`
+  (`Forwarded` is not read). A proxy that sends its own upstream address
+  instead (nginx does by default) hides the browser's name, and then a
+  rebound name is not refused. If yours cannot pass the name, limit the
+  names at the proxy.
+- Names are matched in any case, and a trailing dot is ignored. A list
+  entry with `http://`, a port, a path or a `*` is refused, and the
+  message says what to type.
+- Empty, the default, answers to any name, as before.
 
 ### include_private
 
@@ -632,7 +669,7 @@ projects:
 | `projects[].runs_on` | string | Where it runs, in words, for "Where it runs" |
 | `projects[].repos` | list | One-key entries, `- <forge id>: owner/name`. The first is the primary (tags, releases, CI, changelog, plans); a repo on another forge is a mirror; more repos on the primary's forge are read in full too |
 | `projects[].containers` | list of strings | Container names for this project, instead of matching by slug or label. A name Docker does not know shows as missing |
-| `projects[].fdroid.index` | string | URL of an F-Droid repo's `index-v1.json`, the main repo's included (`https://f-droid.org/repo/index-v1.json`, about 75 MB). Read every 10 minutes and streamed, keeping only the packages the projects file names (at most 256 MiB is read). A read has 2 minutes, a server that has not begun to answer after 20 seconds fails, and an unchanged index (a 304 answer) is not downloaded again. A package named later is read as soon as the projects file is read again |
+| `projects[].fdroid.index` | string | URL of an F-Droid repo's `index-v1.json`, the main repo's included (`https://f-droid.org/repo/index-v1.json`, about 75 MB). Read every 10 minutes and streamed, keeping only the packages the projects file names (at most 256 MiB is read). A read has 2 minutes, a server that has not begun to answer after 20 seconds fails, and an unchanged index (a 304 answer) is not downloaded again. A package named later is read as soon as the projects file is read again. A redirect is followed only on the same host (http may go to https), the read ignores `HTTP_PROXY` and `HTTPS_PROXY`, and link-local, metadata, 0.0.0.0/8 and multicast addresses are refused. A package that lists more than 10,000 versions fails that index. An address may hold a user and password (`https://user:password@host/...`): errors and the log name it by scheme, host and path only. One read can use a few times the 256 MiB in memory while it runs, so name only indexes you trust |
 | `projects[].fdroid.package` | string | The app's package id in that index. Its published version is the running version for the Deploy rule |
 | `projects[].urls[].label` | string | The link's name, such as `Live` |
 | `projects[].urls[].url` | string | The link |
@@ -750,6 +787,11 @@ and dated within the last 120 days; at most 3, newest first.
 **Changelog.** A `CHANGELOG.md` in [Keep a Changelog](https://keepachangelog.com/)
 form gives the project page its `## [Unreleased]` items and the last
 released version and date.
+
+**Limits.** The first 1 MiB of a `CHANGELOG.md` or a plan file is read. An
+Unreleased item is cut at 1024 bytes, ending "...", and the Unreleased
+section is read for 500 lines. A plan folder may list 10,000 entries on
+Gitea and Forgejo.
 
 ## The Docker feed
 

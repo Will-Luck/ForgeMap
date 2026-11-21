@@ -1,6 +1,8 @@
 package gitea
 
 import (
+	"bytes"
+	"compress/gzip"
 	"context"
 	"encoding/json"
 	"errors"
@@ -9,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -356,6 +359,123 @@ func TestFetchFilesBeacon(t *testing.T) {
 		}
 	}
 	f.check()
+}
+
+// CHANGELOG.md is read up to 1 MiB (Gitea answers up to 16 MiB): what lies
+// past that is never seen.
+func TestFetchFilesReadsAtMostOneMiB(t *testing.T) {
+	f, c := newFake(t)
+	body := "# Changelog\n" + strings.Repeat("filler line\n", (1<<20)/12+1) + "## [Unreleased]\n- hidden\n"
+	f.routes["/api/v1/repos/acme/beacon/raw/CHANGELOG.md"] = func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte(body)) }
+	files, err := c.FetchFiles(context.Background(), beaconRepo(t), nil, fixtureNow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if files.Changelog == nil || len(files.Changelog.Unreleased) != 0 {
+		t.Errorf("changelog = %+v, want nothing from past the first MiB", files.Changelog)
+	}
+	f.check()
+}
+
+// A hostile forge answers a repo list with gzip of "[{},{},...]" just under
+// the 16 MiB cap: about 16 KB on the wire, over 5 million repos once decoded.
+// The list is decoded one item at a time, and more items than were asked for
+// (and a small margin) is an error, so the read fails with little memory used.
+func TestListAnswerLongerThanAskedFails(t *testing.T) {
+	zipped := zippedFill(t, "[", "{},", "{}]")
+	f, c := newFake(t)
+	f.routes["/api/v1/user/repos"] = func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Encoding", "gzip")
+		_, _ = w.Write(zipped)
+	}
+	var before, after runtime.MemStats
+	runtime.GC()
+	runtime.ReadMemStats(&before)
+	_, err := c.ListRepos(context.Background(), nil)
+	runtime.ReadMemStats(&after)
+	if err == nil || err.Error() != "gitea /user/repos: the forge sent more items than asked for" {
+		t.Errorf("err = %v, want the forge sent more items than asked for", err)
+	}
+	if alloc := after.TotalAlloc - before.TotalAlloc; alloc > 256<<20 {
+		t.Errorf("the read allocated %d MiB, want little past the 16 MiB answer", alloc>>20)
+	}
+}
+
+// zippedFill is gzip of head, item repeated, and tail, as long as maxBody
+// allows.
+func zippedFill(t *testing.T, head, item, tail string) []byte {
+	t.Helper()
+	var zipped bytes.Buffer
+	zw := gzip.NewWriter(&zipped)
+	chunk := []byte(strings.Repeat(item, 1<<16))
+	_, _ = zw.Write([]byte(head))
+	for n := len(head); n+len(chunk)+len(tail) <= maxBody; n += len(chunk) {
+		_, _ = zw.Write(chunk)
+	}
+	_, _ = zw.Write([]byte(tail))
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return zipped.Bytes()
+}
+
+// One issue in a list answer can hold millions of labels in the same 16 MiB:
+// gzip of [{"labels":[{},{},...]}] is a few KB on the wire, and the list cap
+// passes it, as it is one item. An issue's labels, assignees and requested
+// reviewers are capped lists too, so the read fails with little memory used.
+func TestIssueWithMillionsOfLabelsFails(t *testing.T) {
+	zipped := zippedFill(t, `[{"number":1,"labels":[`, "{},", "{}]}]")
+	f, c := newFake(t)
+	f.routes["/api/v1/repos/o/r/issues"] = func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Encoding", "gzip")
+		_, _ = w.Write(zipped)
+	}
+	var before, after runtime.MemStats
+	runtime.GC()
+	runtime.ReadMemStats(&before)
+	_, _, err := c.OpenIssues(context.Background(), "o/r")
+	runtime.ReadMemStats(&after)
+	if want := "gitea /repos/o/r/issues: the forge listed more than 1000 labels on an issue"; err == nil || err.Error() != want {
+		t.Errorf("err = %v, want %s", err, want)
+	}
+	// It allocated 1115 MiB before the issue's lists were capped, and about
+	// 100 to 130 MiB after.
+	if alloc := after.TotalAlloc - before.TotalAlloc; alloc > 256<<20 {
+		t.Errorf("the read allocated %d MiB, want little past the 16 MiB answer", alloc>>20)
+	}
+}
+
+// A directory and the heatmap are listed with no limit asked, so each has a
+// cap of its own: 10,000 entries (a few strings each, under 1 MB) and a
+// year of 15-minute points. One more fails and says how many the forge may
+// list, not that it sent more than was asked for.
+func TestUnpagedListsHaveTheirOwnCaps(t *testing.T) {
+	answer := func(item string, n int) func(http.ResponseWriter, *http.Request) {
+		b := []byte("[" + strings.Repeat(item+",", n-1) + item + "]")
+		return func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write(b) }
+	}
+	const entry = `{"name":"2026-10-01-plan.md","path":"docs/plans/2026-10-01-plan.md","type":"file"}`
+	const point = `{"timestamp":1761562800,"contributions":1}`
+	f, c := newFake(t)
+	f.routes["/api/v1/repos/o/r/contents/docs/full"] = answer(entry, 10_000)
+	f.routes["/api/v1/repos/o/r/contents/docs/over"] = answer(entry, 10_001)
+	f.routes["/api/v1/users/full/heatmap"] = answer(point, heatmapMax)
+	f.routes["/api/v1/users/over/heatmap"] = answer(point, heatmapMax+1)
+	ctx := context.Background()
+	if es, err := c.Dir(ctx, "o/r", "docs/full", ""); err != nil || len(es) != 10_000 {
+		t.Errorf("a directory of 10,000 entries: %d entries, %v", len(es), err)
+	}
+	if pts, err := c.Heatmap(ctx, "full"); err != nil || len(pts) != heatmapMax {
+		t.Errorf("a heatmap of %d points: %d points, %v", heatmapMax, len(pts), err)
+	}
+	_, err := c.Dir(ctx, "o/r", "docs/over", "")
+	if want := "gitea /repos/o/r/contents/docs/over: the forge listed more than 10000 entries"; err == nil || err.Error() != want {
+		t.Errorf("a directory of 10,001 entries: %v, want %s", err, want)
+	}
+	_, err = c.Heatmap(ctx, "over")
+	if want := "gitea /users/over/heatmap: the forge listed more than 35146 heatmap points"; err == nil || err.Error() != want {
+		t.Errorf("a heatmap of %d points: %v, want %s", heatmapMax+1, err, want)
+	}
 }
 
 func TestHeatmapAndSearchDecode(t *testing.T) {

@@ -44,6 +44,7 @@ type Status struct { // the install's state, as the guard needs it
 	SignInToView bool          // viewing the pages needs the session
 	SetupLeft    time.Duration // while there is no account: how long setup stays open; 0 once the window has closed, and always once an account exists
 	SetupCode    bool          // while there is no account: step 1 asks for the setup code forgemap -import-config printed
+	Hosts        []string      // the names the page answers to besides IP addresses, localhost and names without a dot; empty: any (see refusedHost)
 }
 type Viewer struct { // what a request carries
 	Session bool // a valid session cookie: the signed-in owner
@@ -100,6 +101,7 @@ type FileRefForm struct{ File, Forge, Repo, Path string } // a projects or ideas
 // MainForm is the main Settings form and setup step 3; Settings.Main carries the current values in it.
 type MainForm struct {
 	Title, Timezone                     string
+	Hosts                               []string // the addresses the page answers to, as typed
 	SignInToView                        bool
 	IncludePrivate                      bool
 	You                                 []string

@@ -8,12 +8,30 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
+)
+
+// Limits on what ReadFiles keeps of a repo's CHANGELOG.md and plans. Anyone
+// who can push to a tracked repo writes these files, so a huge or hostile one
+// must not cost more than a normal one.
+const (
+	// maxFileBytes is read of a CHANGELOG.md or a plan file, and what lies
+	// past it is not seen: the forge APIs answer up to 8 or 16 MiB.
+	maxFileBytes = 1 << 20
+	// changelogItemMax caps one Unreleased item's text in bytes: a longer
+	// one is cut and ends in "...". The page shows a line or two of it.
+	changelogItemMax = 1024
+	// changelogLines is how many lines of the Unreleased section are read;
+	// the rest of it is passed over. The page shows six items.
+	changelogLines = 500
 )
 
 // FileSource is how a forge client reads a repo's files for ReadFiles.
 type FileSource interface {
 	// Raw returns a file's bytes at ref.
 	Raw(ctx context.Context, full, path, ref string) ([]byte, error)
+	// RawUpTo is Raw reading at most limit bytes: a longer file is cut there.
+	RawUpTo(ctx context.Context, full, path, ref string, limit int64) ([]byte, error)
 	// Dir lists a directory at ref.
 	Dir(ctx context.Context, full, path, ref string) ([]Entry, error)
 	// IsNotFound reports a missing file or directory.
@@ -21,16 +39,16 @@ type FileSource interface {
 }
 
 // ReadFiles reads CHANGELOG.md and the newest plans in planDirs on the
-// default branch; changelogURL is where the forge shows CHANGELOG.md. A
-// missing file or directory is skipped; any other failure fails the read, so
-// the caller keeps the previous good one.
+// default branch, the first maxFileBytes of each; changelogURL is where the
+// forge shows CHANGELOG.md. A missing file or directory is skipped; any other
+// failure fails the read, so the caller keeps the previous good one.
 func ReadFiles(ctx context.Context, src FileSource, repo Repo, planDirs []string, now time.Time, changelogURL string) (*Files, error) {
 	f := &Files{FetchedAt: now.UTC()}
 	if repo.Empty {
 		return f, nil
 	}
 	full, ref := repo.FullName, repo.DefaultBranch
-	b, err := src.Raw(ctx, full, "CHANGELOG.md", ref)
+	b, err := src.RawUpTo(ctx, full, "CHANGELOG.md", ref, maxFileBytes)
 	switch {
 	case err == nil:
 		cl := ParseChangelog(string(b))
@@ -56,7 +74,7 @@ func ReadFiles(ctx context.Context, src FileSource, repo Repo, planDirs []string
 		if !pc.Date.IsZero() && now.Sub(pc.Date) > PlanMaxAge {
 			continue
 		}
-		b, err := src.Raw(ctx, full, pc.Path, ref)
+		b, err := src.RawUpTo(ctx, full, pc.Path, ref, maxFileBytes)
 		if err != nil {
 			if src.IsNotFound(err) {
 				continue
@@ -96,9 +114,22 @@ func isUnreleasedHead(line string) bool {
 }
 
 // ParseChangelog reads the Unreleased bullets and the newest released version.
+// It reads changelogLines lines of the Unreleased section and keeps at most
+// changelogItemMax bytes of an item.
 func ParseChangelog(s string) Changelog {
 	var cl Changelog
 	inUnreleased, seenRelease := false, false
+	lines := 0 // of the Unreleased section, read so far
+	// item is the item being read: it stays open until the next bullet, so a
+	// wrapped line joins it once, not by copying it again for every line.
+	var item strings.Builder
+	open := false
+	flush := func() {
+		if open {
+			cl.Unreleased = append(cl.Unreleased, clipItem(item.String()))
+			item.Reset()
+		}
+	}
 	sc := bufio.NewScanner(strings.NewReader(s))
 	sc.Buffer(make([]byte, 0, 64*1024), 4<<20)
 	for sc.Scan() {
@@ -118,17 +149,38 @@ func ParseChangelog(s string) Changelog {
 		if !inUnreleased {
 			continue
 		}
-		if m := bulletRe.FindStringSubmatch(line); m != nil {
-			cl.Unreleased = append(cl.Unreleased, strings.TrimSpace(m[1]))
+		if lines++; lines > changelogLines {
 			continue
 		}
-		// An indented, non-bullet line continues the previous item.
+		if m := bulletRe.FindStringSubmatch(line); m != nil {
+			flush()
+			item.WriteString(strings.TrimSpace(m[1]))
+			open = true
+			continue
+		}
+		// An indented, non-bullet line continues the previous item. Past the
+		// cap nothing more is kept of it.
 		trimmed := strings.TrimSpace(line)
-		if trimmed != "" && line != trimmed && len(cl.Unreleased) > 0 && bulletRe.FindString(trimmed) == "" {
-			cl.Unreleased[len(cl.Unreleased)-1] += " " + trimmed
+		if trimmed != "" && line != trimmed && open && bulletRe.FindString(trimmed) == "" && item.Len() <= changelogItemMax {
+			item.WriteByte(' ')
+			item.WriteString(trimmed)
 		}
 	}
+	flush()
 	return cl
+}
+
+// clipItem cuts an item to changelogItemMax bytes on a character boundary,
+// ending it in "...".
+func clipItem(s string) string {
+	if len(s) <= changelogItemMax {
+		return s
+	}
+	n := changelogItemMax - len("...")
+	for n > 0 && !utf8.RuneStart(s[n]) {
+		n--
+	}
+	return s[:n] + "..."
 }
 
 // Plan is one plan file's progress.

@@ -82,33 +82,50 @@ func Parse(r io.Reader) ([]Container, int, error) {
 
 var labelKeyRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._/-]*=`)
 
+// maxLabels caps one container's label string. Labels come from the image,
+// whoever built it; a longer string is not parsed and its container has no
+// labels.
+const maxLabels = 64 << 10
+
 // ParseLabels splits docker's "k=v,k2=v2" label string. Values may contain
 // commas (JSON blobs), so a segment only starts a new label when it begins
-// with key=.
+// with key=. A string over maxLabels gives no labels.
 func ParseLabels(s string) map[string]string {
+	if len(s) > maxLabels {
+		return map[string]string{}
+	}
+	return parseLabels(s)
+}
+
+// parseLabels is ParseLabels without the cap. Each label is a slice of s from
+// its key to the comma before the next key, so the work is linear in s.
+func parseLabels(s string) map[string]string {
 	out := map[string]string{}
 	if s == "" {
 		return out
 	}
-	var cur string
-	flush := func() {
-		if k, v, ok := strings.Cut(cur, "="); ok && k != "" {
+	flush := func(label string) {
+		if k, v, ok := strings.Cut(label, "="); ok && k != "" {
 			out[k] = v
 		}
 	}
-	for i, seg := range strings.Split(s, ",") {
-		if i > 0 && labelKeyRe.MatchString(seg) {
-			flush()
-			cur = seg
-			continue
+	start := 0 // where the label being read begins
+	for comma := strings.IndexByte(s, ','); comma >= 0; {
+		seg := s[comma+1:]
+		next := strings.IndexByte(seg, ',')
+		if next >= 0 {
+			seg = seg[:next]
 		}
-		if i == 0 {
-			cur = seg
-			continue
+		if labelKeyRe.MatchString(seg) {
+			flush(s[start:comma])
+			start = comma + 1
 		}
-		cur += "," + seg
+		if next < 0 {
+			break
+		}
+		comma += 1 + next
 	}
-	flush()
+	flush(s[start:])
 	return out
 }
 

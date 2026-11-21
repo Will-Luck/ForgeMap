@@ -96,6 +96,53 @@ func TestSignInNextHoldsNoFeedKey(t *testing.T) {
 	}
 }
 
+// offSiteOnceRewritten are nexts that are local paths as sent, but that
+// net/url writes anew as "//evil.example/..." (another site) once the key or
+// the one-time token is taken out: the first segment is an escaped "/", and
+// a byte the path must escape (^ or a literal space) makes it drop the
+// path's own escapes. With %20 in place of the space the path stays local.
+var offSiteOnceRewritten = []string{"/%2Fevil.example/^?once=1", "/%2Fevil.example/ x?key=k"}
+
+// Taking the secrets out of next comes before the check that it is a local
+// path, so a next that the rewrite sends to another site goes to "/": from
+// the redirect of an owner already signed in, in the form, after signing in
+// and in a refusal.
+func TestSignInNextCheckedAfterSecretsGoOut(t *testing.T) {
+	f := ready(true)
+	h := managed(t, managedSite(), f)
+	for _, next := range offSiteOnceRewritten {
+		page := "/signin?next=" + url.QueryEscape(next)
+		went(t, next+": an owner signed in", asOwner(t, h, page), 303, "/")
+		bodyHas(t, next+": the form", get(t, h, page).Body.String(), []string{`name="next" value="/"`}, []string{"evil.example"})
+		f.err = nil
+		went(t, next+": signing in", send(t, h, http.MethodPost, "/signin", false, url.Values{"password": {"x"}, "next": {next}}, nil), 303, "/")
+		f.err = &FormError{Problems: []FieldProblem{{Message: "That username or password is not right."}}}
+		bodyHas(t, next+": refused", send(t, h, http.MethodPost, "/signin", false, url.Values{"password": {"x"}, "next": {next}}, nil).Body.String(),
+			[]string{`name="next" value="/"`}, []string{"evil.example"})
+	}
+}
+
+// withoutSecrets never hands back another site's address: when taking the
+// secrets out makes one, it gives "/". A path it writes anew that is still
+// local keeps its escapes, and one with no secret is untouched.
+func TestWithoutSecretsStaysLocal(t *testing.T) {
+	want := map[string]string{
+		"/%2Fevil.example/%20x?key=k":               "/%2Fevil.example/%20x",
+		"/ideas?key=" + fakeKey + "&kind=quick-win": "/ideas?kind=quick-win",
+		"/p/beacon?once=abc":                        "/p/beacon",
+		"/settings#access":                          "/settings#access",
+		"/%2Fevil.example/^":                        "/%2Fevil.example/^",
+	}
+	for _, in := range offSiteOnceRewritten {
+		want[in] = "/"
+	}
+	for in, w := range want {
+		if got := withoutSecrets(in); got != w {
+			t.Errorf("withoutSecrets(%q) = %q, want %q", in, got, w)
+		}
+	}
+}
+
 // Signing in hands the form to the Manager, sets its cookie and goes to
 // next, but only to a local path. A refusal (422) shows the Manager's words,
 // keeps the name and drops the password. Signing out sets the Manager's

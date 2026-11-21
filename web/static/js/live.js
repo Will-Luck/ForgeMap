@@ -1,6 +1,6 @@
 // Live updates over SSE. Imported only once the page is shown (never while
 // prerendering). Swaps server fragments, raises toasts, keeps the header fresh.
-import { el, icon, ago, fragment, transition, pulse, motionOK, signedOut, signInHere } from "./util.js";
+import { el, icon, ago, fragment, transition, pulse, motionOK, signedOut, signInHere, webURL } from "./util.js";
 import { refreshTimes } from "./time.js";
 
 const status = document.getElementById("live-status");
@@ -318,8 +318,9 @@ function onProject(data, ordered) {
 function toast({ text, href, icon: name, level = "info", project, slug, at }) {
   if (!toasts) return;
   while (toasts.children.length >= 3) toasts.firstElementChild.remove();
+  const link = webURL(href);
   const body = el("div", { class: "toast-body" });
-  if (project) body.append(href ? el("a", { href }, project) : el("b", null, project));
+  if (project) body.append(link ? el("a", { href: link }, project) : el("b", null, project));
   body.append(el("span", { class: "toast-text" }, text));
   if (at) body.append(el("span", { class: "muted small" }, ago(at)));
   const close = el("button", { type: "button", class: "icon-btn", "aria-label": "Dismiss" }, icon("x"));

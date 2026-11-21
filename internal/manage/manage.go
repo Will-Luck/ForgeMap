@@ -158,6 +158,9 @@ func (m *Manager) setupLeft(now time.Time) time.Duration {
 func (m *Manager) Status() web.Status {
 	f := m.store.Get()
 	st := web.Status{Admin: f.Admin != nil, SetupDone: f.Admin != nil && f.SetupDone, SignInToView: m.signIn.Load()}
+	if len(f.Config.Site.Hosts) > 0 { // as saved: the web side reads them in lower case, with no trailing dot
+		st.Hosts = f.Config.Site.Hosts
+	}
 	if f.Admin == nil {
 		st.SetupLeft = m.setupLeft(m.now())
 		st.SetupCode = len(f.SetupCode) > 0

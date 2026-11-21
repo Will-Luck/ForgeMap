@@ -294,21 +294,18 @@ func (c *Client) cachePut(key string, e cached) {
 	c.cacheSize += len(e.body)
 }
 
-// do GETs path with query q, accepting accept, conditional on the last ETag.
-// A 304 answers from the cache, Link header included.
-func (c *Client) do(ctx context.Context, path string, q url.Values, accept string) ([]byte, http.Header, error) {
-	return c.read(ctx, path, q, accept, maxBody)
-}
-
-// read is do returning at most limit bytes of the answer: a longer one is cut
-// there, so it fails to decode.
+// read GETs path with query q, accepting accept, conditional on the last ETag,
+// and returns at most limit bytes of the answer: a longer one is cut there, so
+// it fails to decode. A 304 answers from the cache, Link header included.
 func (c *Client) read(ctx context.Context, path string, q url.Values, accept string, limit int64) ([]byte, http.Header, error) {
 	where := path
 	if len(q) > 0 {
 		where += "?" + q.Encode()
 	}
 	u := strings.TrimRight(c.Base, "/") + where
-	key := accept + " " + u
+	// The limit is part of the key: a body cut short for one reader is never
+	// handed to a reader allowed more, nor a longer one to a reader allowed less.
+	key := accept + " " + strconv.FormatInt(limit, 10) + " " + u
 	// Every GET recurs (a commit window asks from the start of a UTC day), so
 	// each is conditional on its last ETag.
 	prev, havePrev := c.cacheGet(key)

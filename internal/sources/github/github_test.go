@@ -1007,6 +1007,33 @@ func TestFetchFilesContentsAPI(t *testing.T) {
 	}
 }
 
+// CHANGELOG.md is read up to 1 MiB (GitHub answers up to 8 MiB): what lies
+// past that is never seen. The cut read keeps its own ETag entry, so a whole
+// read of the same file is not handed the first MiB.
+func TestFetchFilesReadsAtMostOneMiB(t *testing.T) {
+	f, c := newFake(t, "s3cret")
+	body := "# Changelog\n" + strings.Repeat("filler line\n", (1<<20)/12+1) + "## [Unreleased]\n- hidden\n"
+	f.route("/repos/acme/app/contents/CHANGELOG.md", func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("If-None-Match") == `"v1"` {
+			w.WriteHeader(http.StatusNotModified)
+			return
+		}
+		w.Header().Set("ETag", `"v1"`)
+		_, _ = w.Write([]byte(body))
+	})
+	repo := forge.Repo{FullName: "acme/app", DefaultBranch: "main", HTMLURL: "https://github.com/acme/app"}
+	files, err := c.FetchFiles(context.Background(), repo, nil, date("2026-11-01T00:00:00Z"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if files.Changelog == nil || len(files.Changelog.Unreleased) != 0 {
+		t.Errorf("changelog = %+v, want nothing from past the first MiB", files.Changelog)
+	}
+	if b, err := c.Raw(context.Background(), "acme/app", "CHANGELOG.md", "main"); err != nil || string(b) != body {
+		t.Errorf("a whole read after the cut one: %d bytes, %v; want all %d", len(b), err, len(body))
+	}
+}
+
 func TestSearchIssuesScopedToOwners(t *testing.T) {
 	f, c := newFake(t, "s3cret")
 	f.file("/user", "user.json")

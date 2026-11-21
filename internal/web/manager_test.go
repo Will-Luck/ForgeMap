@@ -165,7 +165,8 @@ func managedSite() *model.Site {
 // sampleSettings: two forges, every main-form value off its default.
 func sampleSettings() Settings {
 	return Settings{Username: "mark", KeyTail: "stuv",
-		Main: MainForm{Title: "Acme projects", Timezone: "Europe/London", SignInToView: true, IncludePrivate: true, You: []string{"mark", "Mark Jones"},
+		Main: MainForm{Title: "Acme projects", Timezone: "Europe/London", Hosts: []string{"example.com", "status.example.com"},
+			SignInToView: true, IncludePrivate: true, You: []string{"mark", "Mark Jones"},
 			NotesType: "markdown", NotesDir: "/notes", NotesMarkers: []string{"WAITING:", "@me"}, DockerFeed: "/feed/docker.json",
 			DockerLabel: "forgemap.project", Projects: FileRefForm{Forge: "gitea", Repo: "acme/meta", Path: "projects.yaml"},
 			IdeaLabels: []string{"idea", "good first issue"}, IdeaMarker: "IDEA", NeedsLabels: []string{"needs-you"}, NeedsAssigned: true,

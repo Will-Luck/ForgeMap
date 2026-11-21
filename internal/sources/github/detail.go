@@ -336,11 +336,16 @@ func (c *Client) Runs(ctx context.Context, full string) ([]forge.Run, error) {
 // Raw returns a file's bytes at ref ("" = default branch) through the contents
 // API. A missing file is an error for which IsNotFound is true.
 func (c *Client) Raw(ctx context.Context, full, path, ref string) ([]byte, error) {
+	return c.RawUpTo(ctx, full, path, ref, maxBody)
+}
+
+// RawUpTo is Raw reading at most limit bytes: a longer file is cut there.
+func (c *Client) RawUpTo(ctx context.Context, full, path, ref string, limit int64) ([]byte, error) {
 	q := url.Values{}
 	if ref != "" {
 		q.Set("ref", ref)
 	}
-	b, _, err := c.do(ctx, repoPath(full)+"/contents/"+filePath(path), q, rawType)
+	b, _, err := c.read(ctx, repoPath(full)+"/contents/"+filePath(path), q, rawType, limit)
 	return b, err
 }
 

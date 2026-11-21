@@ -2,6 +2,8 @@ package config
 
 import (
 	"fmt"
+	"net"
+	"net/netip"
 	"slices"
 	"strings"
 	"time"
@@ -34,6 +36,15 @@ func (c Config) Problems() []Problem {
 	if _, err := time.LoadLocation(c.Site.Timezone); err != nil {
 		add("site.timezone", fmt.Sprintf("%q is not a time zone ForgeMap knows: try one like UTC or Europe/London.", c.Site.Timezone),
 			fmt.Sprintf("site.timezone: %q is not a known time zone (like UTC or America/New_York)", c.Site.Timezone))
+	}
+	hostsKey := "site.hosts"
+	if c.hostsVar {
+		hostsKey = "FORGEMAP_HOSTS"
+	}
+	for _, h := range c.Site.Hosts {
+		if words := hostProblem(h); words != "" {
+			add("site.hosts", words, hostsKey+": "+words)
+		}
 	}
 	if len(c.Forges) == 0 {
 		add("forges", "Connect at least one forge.",
@@ -127,4 +138,52 @@ func (c Config) Problems() []Problem {
 			"docker.host: must be unix:///path/to/socket or tcp://host:port, with no credentials, path or query")
 	}
 	return out
+}
+
+// hostProblem says what is wrong with h, an entry of Site.Hosts, in words a
+// form shows, and what to type instead; "" when it is a host name alone, or
+// an IP address (which always works).
+func hostProblem(h string) string {
+	if _, err := netip.ParseAddr(strings.TrimSuffix(strings.TrimPrefix(h, "["), "]")); err == nil {
+		return ""
+	}
+	if strings.ContainsAny(h, ":/") {
+		name := h
+		if _, rest, ok := strings.Cut(name, "://"); ok {
+			name = rest
+		}
+		name, _, _ = strings.Cut(name, "/")
+		if host, _, err := net.SplitHostPort(name); err == nil {
+			name = host
+		}
+		if hostName(name) {
+			return fmt.Sprintf("%q is more than a name: type %s alone, with no http://, port or path.", h, name)
+		}
+		return fmt.Sprintf("%q is more than a name: type the name alone, such as status.example.com, with no http://, port or path.", h)
+	}
+	if strings.Contains(h, "*") {
+		return fmt.Sprintf("%q holds a *: type each name in full, such as status.example.com.", h)
+	}
+	switch {
+	case hostName(h):
+		return ""
+	case strings.ContainsFunc(h, unicode.IsSpace):
+		return fmt.Sprintf("%q is not a host name: type one such as status.example.com, with no spaces.", h)
+	case strings.ContainsFunc(h, func(r rune) bool { return r > unicode.MaxASCII }):
+		return fmt.Sprintf("%q is not a host name as the browser sends it: use letters a to z, digits, hyphens and single dots (a name with accents goes in its xn-- form).", h)
+	}
+	return fmt.Sprintf("%q is not a host name: use letters a to z, digits, hyphens and single dots, such as status.example.com.", h)
+}
+
+// hostName reports whether h is a host name in lower case: labels of
+// letters, digits, - and _, parted by single dots.
+func hostName(h string) bool {
+	for _, l := range strings.Split(h, ".") {
+		if l == "" || strings.ContainsFunc(l, func(r rune) bool {
+			return !(r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r == '-' || r == '_')
+		}) {
+			return false
+		}
+	}
+	return true
 }

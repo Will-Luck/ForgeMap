@@ -17,7 +17,8 @@ on you.
 >   configured, also container names, probe URLs and note text.
 > - **Private repos are hidden** by default; show them only while sign-in is on, or behind a login.
 > - **A config file or the quick-start variables mean no sign-in:** anyone who can reach the page sees what it
->   shows. Keep it on your LAN or VPN, or behind a reverse proxy that asks for a login. See
+>   shows. Keep it on your LAN or VPN, or behind a reverse proxy that asks for a login, and
+>   [list the addresses it answers to](https://github.com/Will-Luck/forgemap/wiki/Configuration-Reference#addresses). See
 >   [Privacy](https://github.com/Will-Luck/forgemap/wiki/Privacy-and-Security) for everything it shows.
 > - **Examples:** [Docker Compose](https://github.com/Will-Luck/forgemap/wiki/Installation#docker-compose) and [behind a login](https://github.com/Will-Luck/forgemap/wiki/Installation#behind-a-login) with Caddy.
 
@@ -194,6 +195,7 @@ publish the port anywhere else.
 docker run -d --name forgemap --restart unless-stopped \
   -p 127.0.0.1:8080:8080 \
   -v forgemap-data:/data \
+  --read-only --cap-drop ALL --security-opt no-new-privileges \
   ghcr.io/will-luck/forgemap:latest
 docker logs forgemap
 ```
@@ -289,8 +291,9 @@ the config or the quick-start variables `GITEA_URL`, `GITEA_TOKEN`,
 `GITHUB_TOKEN` and `GITHUB_OWNERS`, since any one left makes the next start
 a quick start again. `docker restart` is not enough: it keeps them.
 
-Token scopes, private repos, Docker options, images and binaries are in the
+Token scopes, private repos, Docker options and binaries are in the
 [install guide](https://github.com/Will-Luck/forgemap/wiki/Installation).
+The images are `ghcr.io/will-luck/forgemap` and `willluck/forgemap` on Docker Hub.
 
 ## Documentation
 
@@ -301,6 +304,8 @@ Token scopes, private repos, Docker options, images and binaries are in the
 | [Features](https://github.com/Will-Luck/forgemap/wiki/Features) | States, the Needs you rules, notes, ideas, plans and containers |
 | [FAQ](https://github.com/Will-Luck/forgemap/wiki/FAQ-and-Known-Limits) | Common questions and known limits |
 | [Configuration](https://github.com/Will-Luck/forgemap/wiki/Configuration-Reference) | Every setting, its default and an example |
+| [Security](SECURITY.md) | How to report a vulnerability and check a download |
+| [Contributing](CONTRIBUTING.md) | How changes are taken |
 | [Changelog](CHANGELOG.md) | What changed in each release |
 
 ## About
@@ -308,6 +313,10 @@ Token scopes, private repos, Docker options, images and binaries are in the
 ForgeMap started as a status page I built for my own homelab, to see all of
 my projects in one place. I adapted it so anyone with Gitea, Forgejo or
 GitHub can run it, in case others find it useful too.
+
+ForgeMap was called Waymark until 0.3.0: see the
+[0.3.0 release notes](https://github.com/Will-Luck/forgemap/releases/tag/v0.3.0)
+for what changed.
 
 Built with the help of Claude, which did pretty much all of the leg work.
 

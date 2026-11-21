@@ -5,9 +5,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
+	"strings"
 	"time"
 )
 
@@ -31,6 +34,11 @@ const MaxIndex = 256 << 20
 
 // maxIndex is MaxIndex; a test lowers it.
 var maxIndex int64 = MaxIndex
+
+// maxVersions caps the versions read of one package: an index that lists
+// more fails. A package on f-droid.org lists a few dozen; without a cap a
+// small gzip answer of "{}," could unpack to millions of them.
+const maxVersions = 10_000
 
 // ReadTimeout is how long one index read may take, apart from the app's
 // other reads: a big index on a slow line needs more than their 20 s.
@@ -59,15 +67,91 @@ func ParseIndex(b []byte) (map[string]Package, error) {
 	return decode(bytes.NewReader(b), nil)
 }
 
+// Redact is an index address as errors and logs name it: its scheme, host
+// and path, without the user, password or query that a private repo's
+// address may carry. An address with no host shows as no address at all.
+func Redact(index string) string {
+	u, err := url.Parse(index)
+	if err != nil || u.Host == "" {
+		return "(an address that is not a full URL)"
+	}
+	return (&url.URL{Scheme: u.Scheme, Host: u.Host, Path: u.Path, RawPath: u.RawPath}).String()
+}
+
+// refusedRedirect is CheckRedirect's answer to a redirect it does not follow.
+type refusedRedirect struct {
+	status int
+	why    string // what the redirect changes, from leaves
+}
+
+func (e *refusedRedirect) Error() string {
+	return fmt.Sprintf("HTTP %d (redirect %s is not followed)", e.status, e.why)
+}
+
+// CheckRedirect is the redirect rule of the client that reads indexes: a
+// redirect is followed only on the same host name (in any case), on the same
+// port or the scheme's default one, and from http to https but not back. Any
+// other is not followed, and Fetch reports its status and what it changes,
+// without its target. It stops after 10 redirects, as Go's own rule does.
+func CheckRedirect(req *http.Request, via []*http.Request) error {
+	if why := leaves(via[len(via)-1].URL, req.URL); why != "" {
+		status := http.StatusFound
+		if req.Response != nil {
+			status = req.Response.StatusCode
+		}
+		return &refusedRedirect{status: status, why: why}
+	}
+	if len(via) >= 10 {
+		return errors.New("stopped after 10 redirects")
+	}
+	return nil
+}
+
+// leaves says what a redirect from a to b changes that CheckRedirect does not
+// follow: "to another host", "from https to http", "to another scheme" or "to
+// another port". It is "" for a redirect that stays on a's host.
+func leaves(a, b *url.URL) string {
+	if !strings.EqualFold(a.Hostname(), b.Hostname()) {
+		return "to another host"
+	}
+	if a.Scheme != b.Scheme && (a.Scheme != "http" || b.Scheme != "https") {
+		if a.Scheme == "https" && b.Scheme == "http" {
+			return "from https to http"
+		}
+		return "to another scheme"
+	}
+	if port(a) != port(b) && b.Port() != "" && b.Port() != defaultPort(b.Scheme) {
+		return "to another port"
+	}
+	return ""
+}
+
+func port(u *url.URL) string {
+	if p := u.Port(); p != "" {
+		return p
+	}
+	return defaultPort(u.Scheme)
+}
+
+func defaultPort(scheme string) string {
+	if scheme == "https" {
+		return "443"
+	}
+	return "80"
+}
+
 // Fetch GETs an index, sending userAgent and, when prev holds them, the last
 // read's validators. It keeps only the packages in wanted (all when nil),
-// streaming the rest past, and fails once the index is over MaxIndex.
-func Fetch(ctx context.Context, c *http.Client, url, userAgent string, wanted map[string]bool, prev Validators) (Result, error) {
+// streaming the rest past, and fails once the index is over MaxIndex. Its
+// errors name the index as Redact does.
+func Fetch(ctx context.Context, c *http.Client, index, userAgent string, wanted map[string]bool, prev Validators) (Result, error) {
 	ctx, cancel := context.WithTimeout(ctx, ReadTimeout)
 	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	where := Redact(index)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, index, nil)
 	if err != nil {
-		return Result{}, err
+		// The parse error would quote the address whole.
+		return Result{}, errors.New("fdroid index: the address does not parse as a URL")
 	}
 	req.Header.Set("User-Agent", userAgent)
 	if prev.ETag != "" {
@@ -78,6 +162,16 @@ func Fetch(ctx context.Context, c *http.Client, url, userAgent string, wanted ma
 	}
 	resp, err := c.Do(req)
 	if err != nil {
+		var refused *refusedRedirect
+		if errors.As(err, &refused) {
+			return Result{}, fmt.Errorf("fdroid index %s: %w", where, refused)
+		}
+		// The client names the address it was at, with its query, and the
+		// target of a redirect as the server wrote it: name the index instead.
+		var ue *url.Error
+		if errors.As(err, &ue) {
+			ue.URL = where
+		}
 		return Result{}, fmt.Errorf("fdroid index: %w", err)
 	}
 	defer resp.Body.Close()
@@ -85,7 +179,7 @@ func Fetch(ctx context.Context, c *http.Client, url, userAgent string, wanted ma
 		return Result{NotModified: true, Validators: prev}, nil
 	}
 	if resp.StatusCode != http.StatusOK {
-		return Result{}, fmt.Errorf("fdroid index %s: HTTP %d", url, resp.StatusCode)
+		return Result{}, fmt.Errorf("fdroid index %s: HTTP %d", where, resp.StatusCode)
 	}
 	pkgs, err := decode(&capReader{r: resp.Body, max: maxIndex}, wanted)
 	if err != nil {
@@ -130,19 +224,8 @@ func decode(r io.Reader, wanted map[string]bool) (map[string]Package, error) {
 				}
 				continue
 			}
-			var versions []version
-			if err := dec.Decode(&versions); err != nil {
+			if err := versions(dec, name, out); err != nil {
 				return fail(err)
-			}
-			for _, v := range versions {
-				if cur, ok := out[name]; ok && cur.VersionCode >= v.VersionCode {
-					continue
-				}
-				p := Package{Name: name, VersionName: v.VersionName, VersionCode: v.VersionCode}
-				if v.Added > 0 {
-					p.Added = time.UnixMilli(v.Added).UTC()
-				}
-				out[name] = p
 			}
 		}
 		if err := expect(dec, '}'); err != nil {
@@ -153,6 +236,40 @@ func decode(r io.Reader, wanted map[string]bool) (map[string]Package, error) {
 		return fail(err)
 	}
 	return out, nil
+}
+
+// versions reads one package's version list a version at a time and keeps
+// the highest versionCode in out[name]. null is no versions; more than
+// maxVersions fails.
+func versions(dec *json.Decoder, name string, out map[string]Package) error {
+	tok, err := dec.Token()
+	if err != nil {
+		return err
+	}
+	if tok == nil {
+		return nil
+	}
+	if tok != json.Delim('[') {
+		return fmt.Errorf("want '[' for %s, got %v", name, tok)
+	}
+	for n := 0; dec.More(); n++ {
+		if n == maxVersions {
+			return fmt.Errorf("too many versions for %s", name)
+		}
+		var v version
+		if err := dec.Decode(&v); err != nil {
+			return err
+		}
+		if cur, ok := out[name]; ok && cur.VersionCode >= v.VersionCode {
+			continue
+		}
+		p := Package{Name: name, VersionName: v.VersionName, VersionCode: v.VersionCode}
+		if v.Added > 0 {
+			p.Added = time.UnixMilli(v.Added).UTC()
+		}
+		out[name] = p
+	}
+	return expect(dec, ']')
 }
 
 // expect reads the next token and fails unless it is the delimiter d.

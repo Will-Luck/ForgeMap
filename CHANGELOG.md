@@ -7,9 +7,105 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-11-21
+
+A security release, from a review of 0.3.1. An upgrade needs no change to
+your settings; what behaves differently is under **Changed**.
+
+### Security
+
+- **Sign-in could send you on to another site.** A crafted
+  `/signin?next=...` link could send the owner to another site after
+  sign-in, or at once when already signed in. `next` is now checked as a
+  path on this page after the feed key and one-time token are taken out of
+  it, and anything else goes to `/`.
+- **A page on another site could read an open ForgeMap on your LAN.**
+  Keeping ForgeMap on a LAN or VPN does not stop a web page open in a
+  browser on that network from reaching it under a name of its own (DNS
+  rebinding). With sign-in on, that page got nothing. With sign-in off, or
+  on a config-file or quick-start install, it could read what the page
+  shows. The new **Addresses this page answers to** setting (under
+  **Added**) closes this once you list your names.
+- **A huge or hostile `CHANGELOG.md` in a tracked repo** could hold a CPU
+  core for minutes and hold back the page. The Unreleased items are now
+  built in one pass, and the reads have limits (under **Changed**).
+- **A hostile F-Droid index** could use gigabytes of memory by listing
+  millions of versions for a package you track. Versions are now read one
+  at a time, and a package that lists more than 10,000 fails that index
+  with "too many versions". One index read can still use a few times its
+  256 MiB read limit while it runs.
+- **An F-Droid index address with a user, password or query** was shown in
+  full in source errors, on the page and in the log, when a read failed.
+  Errors and log lines now name the index by scheme, host and path only.
+  An address with a user and password still works.
+- **The F-Droid reader followed redirects anywhere**, and could be sent to
+  link-local or cloud metadata addresses. It now follows a redirect only on
+  the same host, and refuses link-local, metadata, 0.0.0.0/8 and multicast
+  addresses.
+- **A Gitea or Forgejo answer** could use gigabytes of memory with a list
+  far longer than was asked for, or with millions of labels, assignees or
+  reviewers on one issue. Lists are now read one item at a time and fail
+  with "the forge sent more items than asked for" past their limit; an
+  issue may hold 1,000 of each, and a folder 10,000 entries.
+- **A container with a very long label string** in the Docker feed could
+  hold a CPU core on every read. Labels are now parsed in one pass, and a
+  label string over 64 KiB gives that container no labels.
+- **Links from a forge that are not web links** (such as `search-ms:` or
+  `vscode:`) could be followed from the search palette, or shown as a link
+  in a toast. Only `http` and `https` links are followed now; the item
+  still shows, without its link.
+- **`projects.cache.yaml` and `ideas.cache.json`** were readable by every
+  user on the host (mode 0644). They are now owner-only (0600), like
+  `settings.json` and `state.json`; an existing file is fixed at its next
+  write.
+- **Releases.** A tag now publishes nothing unless `govulncheck` passes on
+  the tagged commit. Release builds restore no cache from another run (no
+  Go cache, no image build cache, no cached emulator image), and the
+  binaries job verifies its modules before it builds. The weekly scan also
+  checks the binary inside the `latest` image.
+
+### Added
+
+- **Addresses this page answers to.** An optional list of the host names
+  ForgeMap answers to: in Settings (in the page's settings, one per line),
+  `site.hosts` in a config file, or `FORGEMAP_HOSTS` for a quick start.
+  With a list, a request at any other name gets status 421 and a short
+  page with none of the site on it, on every route. Every name in
+  `X-Forwarded-Host` must be allowed too. IP addresses, `localhost`, names
+  ending in `.localhost` and names without a dot always work. Settings
+  refuses a list that leaves out the address you are using, so a save
+  cannot lock you out. The start log says which names the page answers to,
+  and `forgemap -import-config` carries the list over. Empty, the default,
+  answers to any name, as before. Behind a reverse proxy, the proxy must
+  pass the browser's `Host` or set `X-Forwarded-Host`.
+- **Signed build provenance.** The release binaries and the ghcr.io image
+  now carry signed build provenance, so a download can be checked against
+  this repository's release workflow with `gh attestation verify`.
+- **`SECURITY.md`**: how to report a vulnerability in private and how to
+  check a download. **`CONTRIBUTING.md`**: how to run the tests and how
+  changes are taken.
+
 ### Changed
 
-- The README tour has a picture of the **Open issues** page.
+- **Change password** now says, in its hint and in the notice after a
+  change, that the feed key still works, and to press **Make a new key** if
+  someone else may have used the account. It says so only when a feed key
+  exists. The key itself is not changed, so feed readers and scripts keep
+  working.
+- **`CHANGELOG.md` and plan files** are read for their first 1 MiB (the
+  limits were 8 and 16 MiB). An Unreleased item is cut at 1024 bytes,
+  ending "...", and the Unreleased section is read for 500 lines.
+- **The F-Droid reader no longer uses `HTTP_PROXY` or `HTTPS_PROXY`**, like
+  homepage probes, and no longer follows a redirect to another host, port
+  or from https to http: the source error says which
+  (`HTTP 302 (redirect to another host is not followed)`).
+- A refused address entry and a list answer that is not a list now say
+  what is wrong in plain words.
+- The README's first install command drops capabilities and runs
+  read-only, as the install guide's does. The README names both images,
+  links `SECURITY.md` and `CONTRIBUTING.md`, says ForgeMap was called
+  Waymark until 0.3.0, and its tour has a picture of the **Open issues**
+  page.
 - The CI and release workflows run newer versions of six pinned actions:
   Docker's QEMU, Buildx, metadata and build-push actions, the GitHub
   release action and the Docker Hub README sync.

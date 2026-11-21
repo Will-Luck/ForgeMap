@@ -1,8 +1,10 @@
 package docker
 
 import (
+	"math/rand/v2"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -124,6 +126,91 @@ func TestParseLabels(t *testing.T) {
 			if got[k] != v {
 				t.Errorf("%q [%s] = %q, want %q", in, k, got[k], v)
 			}
+		}
+	}
+}
+
+// A container's labels come from its image, whoever built it. A label string
+// of a million commas once took over a minute a feed read, each comma copying
+// the value read so far; a string over 64 KiB is now not parsed at all, and
+// its container stays with no labels. One just under the cap parses whole.
+func TestParseLabelsLongStringsAreQuick(t *testing.T) {
+	commas := strings.Repeat(",", 1_000_000)
+	under := "x=" + strings.Repeat(",", 64<<10-2)
+	line := `{"Names":"big","Image":"x:1","State":"running","Status":"Up 1 hour","Labels":"x=` + commas + `"}` + "\n"
+	start := time.Now()
+	over := ParseLabels("x=" + commas)
+	whole := ParseLabels(under)
+	cs, skipped, err := Parse(strings.NewReader(line))
+	if d := time.Since(start); d > time.Second {
+		t.Errorf("the parses took %v, want well under a second", d)
+	}
+	if len(over) != 0 {
+		t.Errorf("a label string over 64 KiB gave %d labels, want none", len(over))
+	}
+	if len(whole) != 1 || whole["x"] != under[2:] {
+		t.Errorf("a label string of 64 KiB gave %d labels, x of %d bytes", len(whole), len(whole["x"]))
+	}
+	if err != nil || skipped != 0 || len(cs) != 1 || cs[0].Name != "big" || len(cs[0].Labels) != 0 {
+		t.Errorf("feed with an over-long label string: %d containers, %d skipped, %v", len(cs), skipped, err)
+	}
+	// The parse itself, without the cap, is linear too.
+	start = time.Now()
+	if got := parseLabels("x=" + commas); len(got) != 1 || got["x"] != commas {
+		t.Errorf("a million commas, uncapped: %d labels, x of %d bytes", len(got), len(got["x"]))
+	}
+	if d := time.Since(start); d > time.Second {
+		t.Errorf("the uncapped parse took %v, want well under a second", d)
+	}
+}
+
+// parseLabelsBefore is ParseLabels as it was before it was made linear,
+// kept so a test can show that label strings parse as they did.
+func parseLabelsBefore(s string) map[string]string {
+	out := map[string]string{}
+	if s == "" {
+		return out
+	}
+	var cur string
+	flush := func() {
+		if k, v, ok := strings.Cut(cur, "="); ok && k != "" {
+			out[k] = v
+		}
+	}
+	for i, seg := range strings.Split(s, ",") {
+		if i > 0 && labelKeyRe.MatchString(seg) {
+			flush()
+			cur = seg
+			continue
+		}
+		if i == 0 {
+			cur = seg
+			continue
+		}
+		cur += "," + seg
+	}
+	flush()
+	return out
+}
+
+// Label strings parse exactly as before: the shapes TestParseLabels covers,
+// edge cases of empty segments, keys and repeats, and 20,000 strings drawn
+// from the characters that matter (fixed seed).
+func TestParseLabelsAsBefore(t *testing.T) {
+	ins := []string{"", ",", ",,", "=", "a=", "=a", ",a=1", "a=1,", "a=1,,b=2", "a=1,a=2", "a,b=1", "a=1,b", "a=1,-b=2", "a=1,b.c/d-e=2,f",
+		"a=x,y,b=2", `j={"k": 1, "l": 2},z=9`, "com.docker.compose.project=box,com.docker.compose.service=web,org.opencontainers.image.version=1.2"}
+	rng := rand.New(rand.NewPCG(1, 2))
+	const alphabet = "ab=,.-_/ {}\"1"
+	for range 20_000 {
+		b := make([]byte, rng.IntN(24))
+		for i := range b {
+			b[i] = alphabet[rng.IntN(len(alphabet))]
+		}
+		ins = append(ins, string(b))
+	}
+	for _, in := range ins {
+		if got, want := ParseLabels(in), parseLabelsBefore(in); !reflect.DeepEqual(got, want) {
+			t.Errorf("%q = %v, want %v", in, got, want)
 		}
 	}
 }

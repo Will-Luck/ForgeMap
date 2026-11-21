@@ -35,6 +35,11 @@ type Options struct {
 	// page, and its palette offers the docs on moving it there. It belongs
 	// to the process: it never reaches site.json.
 	FileInstall bool
+	// Hosts are the names a config-file or quick-start install answers to
+	// besides IP addresses, localhost and names without a dot (site.hosts or
+	// FORGEMAP_HOSTS); empty: any. With a Manager, Status().Hosts is read
+	// instead, on every request.
+	Hosts []string
 }
 
 // MoveToSettingsURL is the docs section on moving a config-file install to
@@ -159,9 +164,9 @@ func (s *server) routes() http.Handler {
 		} {
 			mux.HandleFunc(pattern, s.guard(kindAccount, h))
 		}
-		return secure(tidyOnce(mux))
+		return secure(s.answersTo(tidyOnce(mux)))
 	}
-	return secure(mux)
+	return secure(s.answersTo(mux))
 }
 
 // tidyOnce serves an address that carries a one-time sign-in token at its

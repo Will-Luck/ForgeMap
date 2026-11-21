@@ -60,6 +60,8 @@ type Config struct {
 	Warnings []string
 	// badEnv are environment values Load could not use; Validate reports them.
 	badEnv []string
+	// hostsVar: Site.Hosts came from FORGEMAP_HOSTS, so Validate names it.
+	hostsVar bool
 	// origin is where the Config came from, so errors name what to fix.
 	origin Origin
 }
@@ -68,6 +70,10 @@ type Site struct {
 	Title    string
 	Timezone string
 	You      []string
+	// Hosts are the host names the page answers to besides IP addresses,
+	// localhost and names without a dot: lower case, no trailing dot. Nil
+	// answers to any address.
+	Hosts []string
 }
 
 type Forge struct {
@@ -142,6 +148,7 @@ type fileSite struct {
 	Title    string   `yaml:"title"`
 	Timezone string   `yaml:"timezone"`
 	You      []string `yaml:"you"`
+	Hosts    []string `yaml:"hosts"`
 }
 
 type fileForge struct {
@@ -351,6 +358,11 @@ func build(fc fileConfig, forges []Forge, getenv func(string) string) Config {
 	} else {
 		refresh = envBool(getenv, "FORGEMAP_REFRESH", true, &badEnv)
 	}
+	// The addresses the page answers to: the file's key, else the variable.
+	hosts, hostsVar := fc.Site.Hosts, fc.Site.Hosts == nil
+	if hostsVar {
+		hosts = splitList(getenv("FORGEMAP_HOSTS"))
+	}
 	c := Config{
 		Listen:         str(fc.Listen, env("FORGEMAP_LISTEN", ":8080")),
 		DataDir:        str(fc.DataDir, env("DATA_DIR", "/data")),
@@ -363,6 +375,7 @@ func build(fc fileConfig, forges []Forge, getenv func(string) string) Config {
 			Title:    str(fc.Site.Title, env("FORGEMAP_TITLE", "ForgeMap")),
 			Timezone: str(fc.Site.Timezone, env("TZ", "UTC")),
 			You:      fc.Site.You,
+			Hosts:    hostNames(hosts),
 		},
 		Ideas: Ideas{
 			Labels: list(fc.Ideas.Labels, []string{"idea", "enhancement"}),
@@ -394,7 +407,21 @@ func build(fc fileConfig, forges []Forge, getenv func(string) string) Config {
 		}
 		f.Token = strings.TrimSpace(f.Token)
 	}
+	c.hostsVar = hostsVar && c.Site.Hosts != nil
 	return c
+}
+
+// hostNames is list as Site.Hosts keeps it: each entry trimmed, in lower
+// case and with no trailing dot, blanks and repeats dropped; nil for none.
+func hostNames(list []string) []string {
+	var out []string
+	for _, h := range list {
+		h = strings.TrimSuffix(strings.ToLower(strings.TrimSpace(h)), ".")
+		if h != "" && !slices.Contains(out, h) {
+			out = append(out, h)
+		}
+	}
+	return out
 }
 
 func envForges(getenv func(string) string) []Forge {

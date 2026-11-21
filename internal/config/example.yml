@@ -8,6 +8,7 @@ site:
   title: ForgeMap
   timezone: UTC
   you: [Mark]                  # names notes use for the owner (notes adapters only)
+  # hosts: [status.example.com] # the only names the page answers to (and IP addresses, localhost); empty: any
 include_private: false         # true shows private repos too: only behind a login
 refresh: true                  # false takes Refresh now away; POST /api/refresh then answers 404
 forges:

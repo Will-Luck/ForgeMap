@@ -2,6 +2,7 @@ package manage
 
 import (
 	"errors"
+	"reflect"
 	"slices"
 	"strings"
 	"sync"
@@ -47,7 +48,7 @@ func TestCreateAccountSignsIn(t *testing.T) {
 	if len(f.SessionSecret) == 0 || len(f.DeviceSecret) == 0 || !strings.HasPrefix(f.FeedKey, "fm_") || !f.SignIn {
 		t.Errorf("secrets, feed key or sign-in not set up: key %q, sign_in %v", f.FeedKey, f.SignIn)
 	}
-	if st := g.m.Status(); st != (web.Status{Admin: true, SignInToView: true}) {
+	if st := g.m.Status(); !reflect.DeepEqual(st, web.Status{Admin: true, SignInToView: true}) {
 		t.Errorf("Status %+v", st)
 	}
 	r := post("/settings", cookie(t, cs, "fm_session_"))

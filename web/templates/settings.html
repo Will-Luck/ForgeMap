@@ -50,6 +50,12 @@
           <p class="field-hint" id="hint-site.timezone">Like Europe/London. Every date and time on the page is written in it.</p>
           {{template "fieldErr" (dict "Name" "site.timezone" "Msg" (index $e "site.timezone"))}}
         </div>
+        <div class="field">
+          <label for="site.hosts">Addresses this page answers to</label>
+          <textarea class="input mono" id="site.hosts" rows="3" autocomplete="off" spellcheck="false"{{with index $e "site.hosts"}} aria-invalid="true"{{end}} aria-describedby="hint-site.hosts{{with index $e "site.hosts"}} err-site.hosts{{end}}" name="site.hosts">{{joinLines $m.Hosts}}</textarea>
+          <p class="field-hint" id="hint-site.hosts">Leave empty to answer to any address. IP addresses, localhost and names without a dot always work.</p>
+          {{template "fieldErr" (dict "Name" "site.hosts" "Msg" (index $e "site.hosts"))}}
+        </div>
       </section>
 
       <section id="access" class="form-card" aria-labelledby="access-h">
@@ -129,7 +135,7 @@
         <div class="field">
           <label for="pw-new">New password</label>
           <input type="password" class="input" id="pw-new" autocomplete="new-password" required{{with index $p "password"}} aria-invalid="true"{{end}} aria-describedby="hint-password{{with index $p "password"}} err-password{{end}}" name="password" value="">
-          <p class="field-hint" id="hint-password">12 characters or more. Every other device is signed out.</p>
+          <p class="field-hint" id="hint-password">12 characters or more. Every other device is signed out.{{if $v.KeyTail}} The feed key still works. If someone else may have used this account, press Make a new key under Access.{{end}}</p>
           {{template "fieldErr" (dict "Name" "password" "Msg" (index $p "password"))}}
         </div>
         <div class="field">

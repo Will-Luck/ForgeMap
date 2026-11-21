@@ -36,7 +36,7 @@ func (s *server) signInPage(w http.ResponseWriter, r *http.Request) {
 		seeOther(w, r, "/setup")
 		return
 	}
-	next := withoutSecrets(auth.NextPath(r.URL.Query().Get("next")))
+	next := auth.NextPath(withoutSecrets(r.URL.Query().Get("next"))) // checked after the rewrite
 	if m.Authenticate(r).Session {
 		seeOther(w, r, next)
 		return
@@ -54,7 +54,7 @@ func (s *server) signIn(w http.ResponseWriter, r *http.Request) {
 	v := r.PostForm
 	f := SignInForm{Username: strings.TrimSpace(v.Get("username")), Password: v.Get("password"), Keep: v.Get("keep") == "on",
 		Once: onceParam(v.Get("once"))}
-	next := withoutSecrets(auth.NextPath(v.Get("next")))
+	next := auth.NextPath(withoutSecrets(v.Get("next")))
 	cs, err := s.opts.Manager.SignIn(r, f)
 	if err == nil {
 		setCookies(w, cs)
