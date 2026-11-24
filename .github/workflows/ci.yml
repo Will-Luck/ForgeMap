@@ -28,14 +28,14 @@ jobs:
 
       - name: Set up Go (go.mod minimum)
         if: matrix.go == 'go.mod'
-        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with:
           go-version-file: go.mod
           check-latest: true
 
       - name: Set up Go (shipping)
         if: matrix.go != 'go.mod'
-        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with:
           go-version: ${{ matrix.go }}
           check-latest: true
@@ -76,7 +76,7 @@ jobs:
 
       # The shipping Go: its standard library is what the image runs.
       - name: Set up Go
-        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with:
           go-version: '1.27'
           check-latest: true
@@ -96,7 +96,7 @@ jobs:
       # The image builds with the Dockerfile's GO_VERSION (1.27); this step
       # only pins the toolchain on the runner to the same Go.
       - name: Set up Go
-        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with:
           go-version: '1.27'
           check-latest: true
